@@ -7,10 +7,12 @@
 import type { GameConfig } from "./config.js";
 import { buildTurret, createState, startWaveNow, type GameState } from "./sim.js";
 
-/** Two turrets on either side of the stronghold, as [col, row]. */
+/** Four turrets around the stronghold, as [col, row]. */
 export const STRESS_TURRET_TILES: readonly [number, number][] = [
   [2, 8],
   [6, 8],
+  [2, 6],
+  [6, 10],
 ];
 
 export function createStressRun(cfg: GameConfig, seed: number): GameState {

@@ -27,6 +27,13 @@ test("stress: reaches 50 walkers and at least 100 projectiles at once", () => {
   assert.ok(maxShots >= 100, `peak projectiles ${maxShots}`);
   assert.ok(maxShots <= cfg.limits.maxProjectiles, "projectile cap respected");
   assert.equal(s.enemies.length, 50, "walkers survive, so the load is sustained");
+  // Sustained, not just a peak: keep running after the walkers reach the stronghold.
+  let minShots = Infinity;
+  for (let i = 0; i < 30 * 20; i++) {
+    step(s, cfg, DT);
+    minShots = Math.min(minShots, s.projectiles.length);
+  }
+  assert.ok(minShots >= 100, `projectiles fell to ${minShots}`);
 });
 
 test("stress setup does not weaken the normal assault build lock", () => {

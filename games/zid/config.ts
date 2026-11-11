@@ -88,8 +88,10 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
     ...base,
     economy: { startCurrency: 0 },
     stronghold: { ...base.stronghold, maxHp: 1e9 },
-    turret: { ...base.turret, cost: 0, fireRate: 260, damage: 0 },
-    walker: { ...base.walker, maxHp: 1e9, speed: 12 },
+    // Long range and slow walkers keep projectiles in flight for a steady load,
+    // instead of collapsing to point-blank shots once walkers reach the turrets.
+    turret: { ...base.turret, cost: 0, fireRate: 100, damage: 0, range: 1500 },
+    walker: { ...base.walker, maxHp: 1e9, speed: 1.5 },
     wave: { ...base.wave, prepSeconds: 1, warningSeconds: 0, count: 50, spawnSeconds: 0.1 },
   };
 }

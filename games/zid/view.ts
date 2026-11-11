@@ -7,7 +7,17 @@ import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
 import { panelModel, type PanelAction, type PanelSlot } from "./panel.js";
-import { remainingEnemies, structureAt, type BuildRejection, type GameState, type ManageRejection } from "./sim.js";
+import {
+  BLAST_SECONDS,
+  POPUP_SECONDS,
+  remainingEnemies,
+  structureAt,
+  turretRange,
+  type BuildRejection,
+  type GameState,
+  type ManageRejection,
+  type Structure,
+} from "./sim.js";
 
 const C = {
   ground: "#1c1e1b",
@@ -35,6 +45,10 @@ const C = {
   shell: "#f1eee3",
   blast: "#e2884a",
   aim: "#e2584a",
+  flash: "#fff2b0",
+  smoke: "rgba(200,204,196,",
+  coin: "#e9c24a",
+  coinEdge: "#8a6a1c",
   hudBg: "rgba(10,11,10,0.72)",
   text: "#eef0ea",
   quiet: "#a3a89f",
@@ -64,6 +78,7 @@ export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
   "no-such-structure": "Nothing there",
   "not-a-turret": "Only turrets can be upgraded",
   "not-a-barricade": "Only barricades can be reinforced",
+  "not-for-mortar": "Mortars can't upgrade range",
   destroyed: "Rebuild it first",
   "nothing-to-repair": "Already at full health",
   "max-level": "Already at max level",
@@ -78,6 +93,7 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
   "outside-perimeter": "Build inside the fence",
   "invalid-terrain": "Can't build on that ground",
   occupied: "That tile is taken",
+  "limit-reached": "Limit reached · upgrade the base",
   "insufficient-funds": "Not enough supplies",
 };
 
@@ -100,6 +116,7 @@ export function buttonRects(cfg: GameConfig) {
       b0: { x: 370, y: h - 316, w: 310, h: 76 },
       a1: { x: 40, y: h - 224, w: 310, h: 76 },
       b1: { x: 370, y: h - 224, w: 310, h: 76 },
+      a2: { x: 40, y: h - 132, w: 310, h: 76 },
       close: { x: 460, y: h - 132, w: 220, h: 76 },
     } satisfies Record<PanelSlot, { x: number; y: number; w: number; h: number }>,
     /** Backing behind the bottom menu; blocks taps on tiles underneath. */
@@ -135,6 +152,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
     slotRegion("b0"),
     slotRegion("a1"),
     slotRegion("b1"),
+    slotRegion("a2"),
     slotRegion("close"),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
     // While the end screen is up it blocks all world taps; only its button acts.
@@ -255,7 +273,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   for (const st of s.structures) {
     if (!st.turret || st.destroyed) continue;
     ctx.beginPath();
-    ctx.arc(st.x, st.y, st.kind === "mortar" ? cfg.mortar.range : cfg.turret.range, 0, Math.PI * 2);
+    ctx.arc(st.x, st.y, turretRange(cfg, st), 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -274,7 +292,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       const isMortar = selStructure.kind === "mortar";
       ctx.setLineDash([8, 8]);
       ctx.beginPath();
-      ctx.arc(selStructure.x, selStructure.y, isMortar ? cfg.mortar.range : cfg.turret.range, 0, Math.PI * 2);
+      ctx.arc(selStructure.x, selStructure.y, turretRange(cfg, selStructure), 0, Math.PI * 2);
       ctx.stroke();
       if (isMortar) {
         // Dead zone: the mortar can't hit anything this close.
@@ -347,39 +365,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       if (sl.hp < sl.maxHp) bar(ctx, sl.x - half, sl.y - half - 10, half * 2, 6, sl.hp / sl.maxHp, C.warn);
       continue;
     }
-    if (sl.kind === "mortar") {
-      if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
-      const m = cfg.mortar.radius;
-      ctx.fillStyle = C.mortar;
-      ctx.strokeStyle = C.walkerEdge;
-      ctx.lineWidth = 3;
-      roundRect(ctx, sl.x - m, sl.y - m, m * 2, m * 2, 10);
-      ctx.fill();
-      ctx.stroke();
-      // Short, fat tube pointing at the target.
-      ctx.fillStyle = C.barrel;
-      ctx.beginPath();
-      ctx.arc(sl.x + Math.cos(sl.turret.aim) * 8, sl.y + Math.sin(sl.turret.aim) * 8, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = C.walkerEdge;
-      ctx.beginPath();
-      ctx.arc(sl.x + Math.cos(sl.turret.aim) * 8, sl.y + Math.sin(sl.turret.aim) * 8, 6, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
-      ctx.fillStyle = C.turret;
-      ctx.beginPath();
-      ctx.arc(sl.x, sl.y, cfg.turret.radius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = C.barrel;
-      ctx.lineWidth = 8;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(sl.x, sl.y);
-      ctx.lineTo(sl.x + Math.cos(sl.turret.aim) * (cfg.turret.radius + 12), sl.y + Math.sin(sl.turret.aim) * (cfg.turret.radius + 12));
-      ctx.stroke();
-      ctx.lineCap = "butt";
-    }
+    if (sl.kind === "mortar") drawMortar(ctx, cfg, s, sl);
+    else drawMachineGun(ctx, cfg, s, sl);
     {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
       for (let i = 0; i < sl.turret.speed; i++) {
@@ -389,6 +376,11 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       for (let i = 0; i < sl.turret.strength; i++) {
         ctx.fillStyle = C.bad;
         ctx.fillRect(sl.x + 23, sl.y + 26 - i * 9, 7, 6);
+      }
+      // Range pips: blue, along the bottom.
+      for (let i = 0; i < sl.turret.range; i++) {
+        ctx.fillStyle = "#7fb0d8";
+        ctx.fillRect(sl.x - 12 + i * 9, sl.y + 32, 6, 6);
       }
     }
   }
@@ -432,29 +424,58 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.arc(x, y, 7, 0, Math.PI * 2);
     ctx.fill();
   }
-  for (const b of s.blasts) {
-    const a = Math.max(0, b.life / 0.35);
-    ctx.fillStyle = `rgba(226,136,74,${0.55 * a})`;
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.r * (1.15 - 0.3 * a), 0, Math.PI * 2);
-    ctx.fill();
-  }
+  for (const b of s.blasts) drawBlast(ctx, b.x, b.y, b.r, BLAST_SECONDS - b.life);
 
-  // The player's mortar aim point: crosshair.
-  if (s.mortarAim && s.phase === "wave") {
-    const { x, y } = s.mortarAim;
-    const pulse = 0.6 + 0.4 * Math.sin(s.time * 8);
-    ctx.strokeStyle = C.aim;
-    ctx.globalAlpha = pulse;
-    ctx.lineWidth = 4;
+  // Supplies picked up from kills: a coin and "+N" floating up.
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const p of s.popups) {
+    const age = POPUP_SECONDS - p.life;
+    const a = Math.min(1, p.life / 0.35) * Math.min(1, age / 0.08);
+    const pop = 1 + 0.35 * Math.max(0, 1 - age / 0.15);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = C.coin;
+    ctx.strokeStyle = C.coinEdge;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(x, y, cfg.mortar.blastRadius, 0, Math.PI * 2);
-    ctx.moveTo(x - 30, y);
-    ctx.lineTo(x + 30, y);
-    ctx.moveTo(x, y - 30);
-    ctx.lineTo(x, y + 30);
+    ctx.arc(p.x - 16, p.y, 9 * pop, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.font = `800 ${Math.round(24 * pop)}px system-ui, sans-serif`;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(10,11,10,0.8)";
+    ctx.strokeText(`+${p.amount}`, p.x + 12, p.y);
+    ctx.fillStyle = C.coin;
+    ctx.fillText(`+${p.amount}`, p.x + 12, p.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // Crosshairs: one per aimed mortar, with a faint line back to its mortar.
+  if (s.phase === "wave") {
+    const pulse = 0.6 + 0.4 * Math.sin(s.time * 8);
+    for (const m of s.structures) {
+      const a = m.turret?.aimPoint;
+      if (!a || m.destroyed) continue;
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = C.aim;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 10]);
+      ctx.beginPath();
+      ctx.moveTo(m.x, m.y);
+      ctx.lineTo(a.x, a.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = pulse;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, cfg.mortar.blastRadius, 0, Math.PI * 2);
+      ctx.moveTo(a.x - 30, a.y);
+      ctx.lineTo(a.x + 30, a.y);
+      ctx.moveTo(a.x, a.y - 30);
+      ctx.lineTo(a.x, a.y + 30);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
   // HUD.
@@ -480,9 +501,15 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   if (s.phase === "wave" && s.structures.some((st) => st.kind === "mortar" && !st.destroyed)) {
     ctx.fillStyle = C.hudBg;
     ctx.fillRect(0, 78, W, 40);
-    ctx.fillStyle = s.mortarAim ? C.aim : C.quiet;
+    const aimed = s.structures.filter((st) => st.turret?.aimPoint && !st.destroyed).length;
+    const total = s.structures.filter((st) => st.kind === "mortar" && !st.destroyed).length;
+    ctx.fillStyle = aimed ? C.aim : C.quiet;
     ctx.font = "700 20px system-ui, sans-serif";
-    ctx.fillText(s.mortarAim ? "Mortars aimed · tap the marker for automatic" : "Tap the map to aim mortars", W / 2, 98);
+    ctx.fillText(
+      aimed ? `${aimed}/${total} mortar${total === 1 ? "" : "s"} aimed · tap a crosshair to free it` : "Tap the map to aim a mortar",
+      W / 2,
+      98,
+    );
   }
 
   const r = buttonRects(cfg);
@@ -519,7 +546,13 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   if (model) {
     ctx.fillStyle = model.note ? C.warn : C.text;
     ctx.font = "700 24px system-ui, sans-serif";
-    ctx.fillText(model.note ? BUILD_MESSAGES[model.note as BuildRejection] ?? model.title : model.title, W / 2, r.slots.a0.y - 40);
+    const heading = model.note ? BUILD_MESSAGES[model.note as BuildRejection] ?? model.title : model.title;
+    if (model.info) {
+      ctx.fillText(heading, W / 2, r.slots.a0.y - 62);
+      ctx.fillStyle = C.quiet;
+      ctx.font = "600 20px system-ui, sans-serif";
+      ctx.fillText(model.info, W / 2, r.slots.a0.y - 30);
+    } else ctx.fillText(heading, W / 2, r.slots.a0.y - 40);
     const armed = view.recycleArmedUntil > s.time;
     for (const b of model.buttons) {
       const label = b.confirm && armed ? "Tap again to recycle" : b.label;
@@ -555,5 +588,143 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText(`Kills ${s.kills}`, W / 2, H / 2 + 14);
     ctx.fillText(`Time ${clock(s.time)}`, W / 2, H / 2 + 58);
     button(ctx, r.restart, "Play again");
+  }
+}
+
+/** 0..1, how fresh the last shot is over `window` seconds (1 = just fired). */
+function fresh(s: GameState, lastShot: number, window: number): number {
+  return Math.max(0, 1 - (s.time - lastShot) / window);
+}
+
+/** Wisps of smoke rising from a barrel tip after firing. */
+function drawSmoke(ctx: CanvasRenderingContext2D, s: GameState, x: number, y: number, lastShot: number, life: number, size: number): void {
+  const age = s.time - lastShot;
+  if (age < 0 || age > life) return;
+  const fade = 1 - age / life;
+  for (let i = 0; i < 3; i++) {
+    const t = age + i * 0.12;
+    ctx.fillStyle = `${C.smoke}${(0.35 * fade).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(x + Math.sin(s.time * 3 + i * 2) * 5, y - t * 40 - i * 4, size * (0.6 + t), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawMachineGun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
+  const kick = fresh(s, t.lastShot, 0.09);
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  // Recoil: the whole gun nudges back, the barrel more.
+  const bx = sl.x - cos * kick * 3;
+  const by = sl.y - sin * kick * 3;
+  ctx.fillStyle = C.turret;
+  ctx.beginPath();
+  ctx.arc(bx, by, cfg.turret.radius, 0, Math.PI * 2);
+  ctx.fill();
+  const len = cfg.turret.radius + 12 - kick * 7;
+  const tipX = bx + cos * len;
+  const tipY = by + sin * len;
+  ctx.strokeStyle = C.barrel;
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+  // Muzzle flash: a short bright burst at the tip.
+  const flash = fresh(s, t.lastShot, 0.06);
+  if (flash > 0) {
+    ctx.fillStyle = C.flash;
+    ctx.globalAlpha = flash;
+    ctx.beginPath();
+    const fx = tipX + cos * 8;
+    const fy = tipY + sin * 8;
+    for (let i = 0; i < 6; i++) {
+      const ang = t.aim + (i * Math.PI) / 3;
+      const r = i % 2 === 0 ? 14 : 6;
+      ctx.lineTo(fx + Math.cos(ang) * r, fy + Math.sin(ang) * r);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  drawSmoke(ctx, s, tipX, tipY, t.lastShot, 0.9, 4);
+}
+
+function drawMortar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
+  const m = cfg.mortar.radius;
+  const kick = fresh(s, t.lastShot, 0.3);
+  // The base thumps down when it fires.
+  const squash = 1 - 0.12 * kick;
+  ctx.fillStyle = C.mortar;
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  roundRect(ctx, sl.x - m / squash, sl.y - m * squash, (m * 2) / squash, m * 2 * squash, 10);
+  ctx.fill();
+  ctx.stroke();
+  // Short, fat tube pointing at the target; it drops back on firing.
+  const off = 8 - kick * 6;
+  const tx = sl.x + Math.cos(t.aim) * off;
+  const ty = sl.y + Math.sin(t.aim) * off;
+  ctx.fillStyle = C.barrel;
+  ctx.beginPath();
+  ctx.arc(tx, ty, 12 + kick * 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = C.walkerEdge;
+  ctx.beginPath();
+  ctx.arc(tx, ty, 6, 0, Math.PI * 2);
+  ctx.fill();
+  const flash = fresh(s, t.lastShot, 0.14);
+  if (flash > 0) {
+    ctx.fillStyle = C.flash;
+    ctx.globalAlpha = flash;
+    ctx.beginPath();
+    ctx.arc(tx, ty, 10 + (1 - flash) * 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  drawSmoke(ctx, s, tx, ty, t.lastShot, 1.4, 7);
+}
+
+/** A landed shell: flash, shockwave ring, flying debris, then smoke. */
+function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, age: number): void {
+  if (age < 0.2) {
+    const k = age / 0.2;
+    ctx.fillStyle = `rgba(255,236,170,${0.85 * (1 - k)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (0.5 + 0.6 * k), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  if (age < 0.45) {
+    const k = age / 0.45;
+    ctx.strokeStyle = `rgba(226,136,74,${0.8 * (1 - k)})`;
+    ctx.lineWidth = 6 * (1 - k) + 1;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (0.4 + 0.9 * k), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (age < 0.5) {
+    const k = age / 0.5;
+    ctx.fillStyle = `rgba(120,104,80,${1 - k})`;
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2 + 0.4;
+      const d = r * 1.1 * k;
+      ctx.fillRect(x + Math.cos(ang) * d - 3, y + Math.sin(ang) * d - 3 - 30 * Math.sin(Math.PI * k), 6, 6);
+    }
+  }
+  if (age > 0.12) {
+    const k = Math.min(1, (age - 0.12) / (BLAST_SECONDS - 0.12));
+    for (let i = 0; i < 5; i++) {
+      const ang = (i / 5) * Math.PI * 2;
+      ctx.fillStyle = `${C.smoke}${(0.3 * (1 - k)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(ang) * r * 0.35, y + Math.sin(ang) * r * 0.35 - k * 25, r * (0.25 + 0.3 * k), 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

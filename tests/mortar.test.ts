@@ -18,6 +18,7 @@ import {
   startWaveNow,
   step,
   turretStats,
+  upgradeBase,
   upgradeTurret,
   type GameState,
   type Structure,
@@ -153,41 +154,62 @@ test("aim: tap-to-aim only during an assault and only with a working mortar", ()
   assert.deepEqual(aimMortars(s3, cfg, { x: 100, y: 100 }), { ok: false, reason: "no-mortars" }, "rubble can't fire");
 });
 
-test("aim: shells go to the aim point, even with zombies elsewhere; clearing returns to automatic", () => {
+test("aim: a tap sends one mortar's shells there, even with zombies elsewhere; tapping the crosshair frees it", () => {
   const s = prep();
   const m = withMortar(s);
   assault(s);
   add(s, m.x - 200, m.y + 250);
   const aim = { x: m.x + 150, y: m.y + 280 };
-  assert.deepEqual(aimMortars(s, cfg, aim), { ok: true });
+  assert.deepEqual(aimMortars(s, cfg, aim), { ok: true, action: "aimed", mortarId: m.id });
   step(s, cfg, DT);
   assert.equal(s.shells.length, 1);
   assert.deepEqual([s.shells[0]!.tx, s.shells[0]!.ty], [aim.x, aim.y]);
-  // Shelling empty ground still costs the shot: the cooldown runs.
-  aimMortars(s, cfg, null);
-  assert.equal(s.mortarAim, null);
+  assert.deepEqual(aimMortars(s, cfg, { x: aim.x + 20, y: aim.y - 10 }), { ok: true, action: "freed", mortarId: m.id });
+  assert.equal(m.turret!.aimPoint, null);
   assert.deepEqual(mortarTarget(s, cfg, m), { x: s.enemies[0]!.x, y: s.enemies[0]!.y });
 });
 
-test("aim: a mortar that can't reach the aim point keeps choosing its own targets", () => {
+test("aim: a spot no mortar can reach is refused", () => {
   const s = prep();
   const m = withMortar(s);
   assault(s);
-  add(s, m.x, m.y + 250);
-  aimMortars(s, cfg, { x: m.x + 10, y: m.y + 10 }); // inside the dead zone
-  const t = mortarTarget(s, cfg, m)!;
-  assert.deepEqual(t, { x: s.enemies[0]!.x, y: s.enemies[0]!.y });
+  assert.deepEqual(aimMortars(s, cfg, { x: m.x + 10, y: m.y + 10 }), { ok: false, reason: "out-of-reach" }, "dead zone");
+  assert.deepEqual(aimMortars(s, cfg, { x: m.x, y: m.y + cfg.mortar.range + 50 }), { ok: false, reason: "out-of-reach" }, "too far");
+  assert.equal(m.turret!.aimPoint, null);
 });
 
-test("aim: the aim point and shells in the air are cleared when the wave ends", () => {
+test("aim: crosshairs and shells in the air are cleared when the wave ends", () => {
   const s = prep();
-  withMortar(s);
+  const m = withMortar(s);
   assault(s);
-  aimMortars(s, cfg, { x: 360, y: 400 });
+  assert.ok(aimMortars(s, cfg, { x: m.x, y: m.y + 250 }).ok);
   step(s, cfg, DT); // no enemies left: wave clears
   assert.equal(s.phase, "prep");
-  assert.equal(s.mortarAim, null);
+  assert.equal(m.turret!.aimPoint, null);
   assert.equal(s.shells.length, 0);
+});
+
+test("split fire: each tap claims the closest free mortar in reach; when all are aimed the closest one moves", () => {
+  const s = prep();
+  assert.ok(upgradeBase(s, cfg).ok);
+  const a = buildMortar(s, cfg, 2, 4);
+  const b = buildMortar(s, cfg, 6, 4);
+  assert.ok(a.ok && b.ok);
+  const ma = a.structure;
+  const mb = b.structure;
+  assault(s);
+  // Both mortars reach every spot used here.
+  const p1 = { x: ma.x + 40, y: 600 }; // closer to A
+  const r1 = aimMortars(s, cfg, p1);
+  assert.deepEqual(r1, { ok: true, action: "aimed", mortarId: ma.id });
+  const p2 = { x: ma.x + 100, y: 700 }; // still closer to A, but A is taken
+  assert.deepEqual(aimMortars(s, cfg, p2), { ok: true, action: "aimed", mortarId: mb.id });
+  assert.deepEqual(ma.turret!.aimPoint, p1);
+  assert.deepEqual(mb.turret!.aimPoint, p2);
+  // Both aimed: a third spot moves the closest one.
+  const p3 = { x: mb.x - 20, y: 560 };
+  assert.deepEqual(aimMortars(s, cfg, p3), { ok: true, action: "aimed", mortarId: mb.id });
+  assert.deepEqual(ma.turret!.aimPoint, p1, "A keeps its target");
 });
 
 test("mortar upgrades: both Speed and Damage, priced higher than the machine gun's", () => {

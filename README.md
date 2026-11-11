@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Base update
+
+- **Base upgrades:** tap the stronghold to upgrade the base (100, 180, 280, 400). Each level raises how many machine guns and mortars you may build (3/1 at the start, up to 12/5) and adds stronghold health. Barricades are never capped; rubble counts until recycled.
+- **Range upgrade** for the machine gun (+20% reach per level, 3 levels). Mortars don't take it.
+- **Split fire:** each tap during an assault aims one mortar, the closest free one that can reach the spot. Several crosshairs can be up at once; tap one to put that mortar back on automatic.
+- **Animations:** coin and "+N" when a kill drops Supplies; machine-gun recoil, muzzle flash and barrel smoke; mortar thump, flash and smoke; shell blasts with a shockwave, debris and smoke.
+
 Not in this milestone: free placement (Zone B), other turrets, barricades, other enemies, the adaptive scheduler, permanent progression, saves, sign-in, the portal, expeditions, monetization and sound.
 
 ### URL options

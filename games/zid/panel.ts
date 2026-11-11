@@ -18,17 +18,25 @@ import {
   repairQuote,
   structureAt,
   turretStats,
+  turretRange,
+  buildLimit,
+  countKind,
+  checkBaseUpgrade,
+  nextBaseUpgradeCost,
+  type UpgradePathId,
+  type StructureKind,
   type GameState,
   type Structure,
 } from "./sim.js";
 
-export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "close";
+export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "a2" | "close";
 
 export type PanelAction =
   | { kind: "build-turret" }
   | { kind: "build-mortar" }
   | { kind: "build-barricade" }
-  | { kind: "upgrade"; path: "speed" | "strength" }
+  | { kind: "upgrade"; path: UpgradePathId }
+  | { kind: "upgrade-base" }
   | { kind: "reinforce" }
   | { kind: "repair" }
   | { kind: "recycle" }
@@ -47,6 +55,8 @@ export interface PanelModel {
   title: string;
   /** Short reason shown when a choice is unavailable. */
   note: string | null;
+  /** Optional second line of plain information under the title. */
+  info?: string;
   buttons: PanelButton[];
   target: { kind: "tile" } | { kind: "stronghold" } | { kind: "structure"; structure: Structure };
 }
@@ -60,9 +70,9 @@ function repairButton(s: GameState, cfg: GameConfig, slot: PanelSlot, st: Struct
   return { slot, label: `${label} · ${q.cost}`, enabled: true, action: { kind: "repair" } };
 }
 
-function recycleButton(cfg: GameConfig, s: GameState, st: Structure): PanelButton {
+function recycleButton(cfg: GameConfig, s: GameState, st: Structure, slot: PanelSlot = "b1"): PanelButton {
   const busy = s.phase === "wave" || s.phase === "lost";
-  return { slot: "b1", label: `Recycle · +${recycleValue(cfg, st)}`, enabled: !busy, action: { kind: "recycle" }, confirm: true };
+  return { slot, label: `Recycle · +${recycleValue(cfg, st)}`, enabled: !busy, action: { kind: "recycle" }, confirm: true };
 }
 
 export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel {
@@ -71,10 +81,26 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
 
   if (!st && overlapsStronghold(cfg, sel.col, sel.row)) {
     const sh = s.stronghold;
+    const lvl = cfg.stronghold.levels[sh.level];
+    const upCost = nextBaseUpgradeCost(s, cfg);
+    const next = cfg.stronghold.levels[sh.level + 1];
     return {
-      title: `Stronghold · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
+      title: `Base level ${sh.level + 1} · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
       note: null,
-      buttons: [{ ...repairButton(s, cfg, "a0", null, "Repair stronghold") }, close],
+      info: lvl
+        ? `Allows ${lvl.machineGuns} turrets, ${lvl.mortars} mortar${lvl.mortars === 1 ? "" : "s"}` +
+          (next ? ` · next: ${next.machineGuns} turrets, ${next.mortars} mortars, +${next.maxHp - lvl.maxHp} hp` : "")
+        : undefined,
+      buttons: [
+        repairButton(s, cfg, "a0", null, "Repair"),
+        {
+          slot: "b0",
+          label: upCost === null ? "Base MAX" : `Upgrade base · ${upCost}`,
+          enabled: checkBaseUpgrade(s, cfg) === null,
+          action: { kind: "upgrade-base" },
+        },
+        close,
+      ],
       target: { kind: "stronghold" },
     };
   }
@@ -83,13 +109,19 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
     const turretWhy = checkBuild(s, cfg, sel.col, sel.row, "machine-gun");
     const mortarWhy = checkBuild(s, cfg, sel.col, sel.row, "mortar");
     const barrWhy = checkBuild(s, cfg, sel.col, sel.row, "barricade");
-    const blocked = turretWhy && turretWhy !== "insufficient-funds" ? turretWhy : null;
+    // Tile problems show for every kind; the barricade check has no build cap.
+    const blocked = barrWhy && barrWhy !== "insufficient-funds" ? barrWhy : null;
+    const capped = (kind: StructureKind, name: string): string => {
+      const limit = buildLimit(s, cfg, kind)!;
+      const n = countKind(s, kind);
+      return n >= limit ? `${name} ${n}/${limit} · full` : `${name} ${n}/${limit} · ${buildCost(cfg, kind)}`;
+    };
     return {
       title: blocked ? "Can't build here" : "Build here",
       note: blocked,
       buttons: [
-        { slot: "a0", label: `Turret · ${buildCost(cfg, "machine-gun")}`, enabled: !turretWhy, action: { kind: "build-turret" } },
-        { slot: "b0", label: `Mortar · ${buildCost(cfg, "mortar")}`, enabled: !mortarWhy, action: { kind: "build-mortar" } },
+        { slot: "a0", label: capped("machine-gun", "Turret"), enabled: !turretWhy, action: { kind: "build-turret" } },
+        { slot: "b0", label: capped("mortar", "Mortar"), enabled: !mortarWhy, action: { kind: "build-mortar" } },
         { slot: "a1", label: `Barricade · ${buildCost(cfg, "barricade")}`, enabled: !barrWhy, action: { kind: "build-barricade" } },
         close,
       ],
@@ -109,7 +141,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
 
   if (st.turret) {
     const stats = turretStats(cfg, st.turret, st.kind);
-    const up = (slot: PanelSlot, label: string, path: "speed" | "strength"): PanelButton => {
+    const up = (slot: PanelSlot, label: string, path: UpgradePathId): PanelButton => {
       const cost = nextUpgradeCost(cfg, st, path);
       const max = cfg.upgrades[path].costs.length;
       return {
@@ -119,6 +151,21 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
         action: { kind: "upgrade", path },
       };
     };
+    if (st.kind === "machine-gun") {
+      return {
+        title: `${name} · ${Math.ceil(st.hp)}/${st.maxHp} hp · ${stats.fireRate.toFixed(1)}/s · ${stats.damage.toFixed(1)} dmg · range ${Math.round(turretRange(cfg, st))}`,
+        note: null,
+        buttons: [
+          up("a0", "Speed", "speed"),
+          up("b0", "Damage", "strength"),
+          up("a1", "Range", "range"),
+          repairButton(s, cfg, "b1", st, "Repair"),
+          recycleButton(cfg, s, st, "a2"),
+          close,
+        ],
+        target: { kind: "structure", structure: st },
+      };
+    }
     return {
       title: `${name} · ${Math.ceil(st.hp)}/${st.maxHp} hp · ${stats.fireRate.toFixed(1)}/s · ${stats.damage.toFixed(1)} dmg`,
       note: null,

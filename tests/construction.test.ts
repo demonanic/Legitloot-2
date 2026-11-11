@@ -116,7 +116,8 @@ test("construction: checkBuild is a pure preview that matches buildTurret", () =
   assert.deepEqual(buildTurret(s, cfg, t.col, t.row), { ok: false, reason: "insufficient-funds" });
 });
 
-test("construction: many turrets can be placed, limited only by space and supplies", () => {
+test("construction: many turrets can be placed, limited only by space and supplies (caps lifted)", () => {
+  const cfg = { ...baseConfig, stronghold: { ...baseConfig.stronghold, levels: [{ cost: 0, machineGuns: 999, mortars: 999, maxHp: 400 }] } };
   const s = createState(cfg, 1);
   s.currency = 1e6;
   let built = 0;

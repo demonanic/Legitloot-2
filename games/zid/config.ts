@@ -24,6 +24,14 @@ export interface EnemyStats {
   drop: { chance: number; min: number; max: number };
 }
 
+export interface BaseLevel {
+  /** Price of upgrading to this level (0 for the starting level). */
+  cost: number;
+  machineGuns: number;
+  mortars: number;
+  maxHp: number;
+}
+
 export interface UpgradePath {
   /** Cost of each level; the array length is the maximum level. */
   costs: number[];
@@ -69,7 +77,12 @@ export interface GameConfig {
   world: { width: number; height: number };
   /** Label shown for the run currency. The final name is an open decision. */
   currencyLabel: string;
-  stronghold: { x: number; y: number; halfSize: number; maxHp: number };
+  /**
+   * The stronghold. `levels[0]` is the starting base; each later level is a
+   * base upgrade (bought between waves) that raises its health and how many
+   * machine guns and mortars may be built. Barricades are never capped.
+   */
+  stronghold: { x: number; y: number; halfSize: number; maxHp: number; levels: BaseLevel[] };
   /**
    * Construction area. Tiles are square and sized for touch: 80 world units is
    * about 46 CSS px on a 412 px-wide phone (44 px is the minimum touch target).
@@ -132,8 +145,8 @@ export interface GameConfig {
   recycle: { intactShare: number; rubbleShare: number };
   /** Zombies take any open route; a blocked tile costs this much (plus its health) to path through. */
   pathing: { blockedTileCost: number };
-  /** Turret upgrades. A turret may take both paths. Preparation only. */
-  upgrades: { speed: UpgradePath; strength: UpgradePath };
+  /** Turret upgrades. A turret may take every path. Range is machine gun only. Preparation only. */
+  upgrades: { speed: UpgradePath; strength: UpgradePath; range: UpgradePath };
   enemies: Record<EnemyType, EnemyStats>;
   wave: {
     prepSeconds: number;
@@ -150,7 +163,19 @@ export interface GameConfig {
 export const baseConfig: GameConfig = {
   world: { width: 720, height: 1280 },
   currencyLabel: "Supplies",
-  stronghold: { x: 360, y: 660, halfSize: 52, maxHp: 400 },
+  stronghold: {
+    x: 360,
+    y: 660,
+    halfSize: 52,
+    maxHp: 400,
+    levels: [
+      { cost: 0, machineGuns: 3, mortars: 1, maxHp: 400 },
+      { cost: 100, machineGuns: 5, mortars: 2, maxHp: 480 },
+      { cost: 180, machineGuns: 7, mortars: 3, maxHp: 560 },
+      { cost: 280, machineGuns: 9, mortars: 4, maxHp: 640 },
+      { cost: 400, machineGuns: 12, mortars: 5, maxHp: 720 },
+    ],
+  },
   construction: {
     tileSize: 80,
     perimeter: [
@@ -186,6 +211,7 @@ export const baseConfig: GameConfig = {
     // and the two paths multiply, so investing in one turret pays off.
     speed: { costs: [30, 50, 80], perLevel: 0.5 },
     strength: { costs: [30, 50, 80], perLevel: 0.5 },
+    range: { costs: [25, 40, 60], perLevel: 0.2 },
   },
   enemies: {
     walker: { maxHp: 26, speed: 39, radius: 14, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
@@ -231,7 +257,7 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
   return {
     ...base,
     economy: { startCurrency: 0 },
-    stronghold: { ...base.stronghold, maxHp: 1e9 },
+    stronghold: { ...base.stronghold, maxHp: 1e9, levels: [{ cost: 0, machineGuns: 99, mortars: 99, maxHp: 1e9 }] },
     // Long range and slow walkers keep projectiles in flight for a steady load,
     // instead of collapsing to point-blank shots once walkers reach the turrets.
     turret: { ...base.turret, cost: 0, fireRate: 100, damage: 0, range: 1500 },

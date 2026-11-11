@@ -23,6 +23,7 @@ import {
   startWaveNow,
   step,
   structureAt,
+  upgradeBase,
   upgradeTurret,
   type GameState,
   type ManageResult,
@@ -88,6 +89,9 @@ function runPanelAction(action: PanelAction): void {
     case "upgrade":
       if (st) report(upgradeTurret(state, cfg, st.id, action.path));
       return;
+    case "upgrade-base":
+      report(upgradeBase(state, cfg));
+      return;
     case "reinforce":
       if (st) report(reinforceBarricade(state, cfg, st.id));
       return;
@@ -130,22 +134,12 @@ bindTaps(canvas, renderer.toWorld, (p) => {
     const tile = tileAt(cfg, wp.x, wp.y);
     const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
     if (state.phase === "wave") {
-      // With mortars on the field, a tap aims them; tapping the marker again
-      // hands them back to automatic targeting.
+      // With mortars on the field, each tap aims one mortar (split fire);
+      // tapping a crosshair hands that mortar back to automatic.
       if (state.structures.some((st) => st.kind === "mortar" && !st.destroyed)) {
-        const aim = state.mortarAim;
-        if (aim && Math.hypot(wp.x - aim.x, wp.y - aim.y) <= 60) {
-          aimMortars(state, cfg, null);
-          toast("Mortars on automatic");
-        } else {
-          aimMortars(state, cfg, wp);
-          const reach = state.structures.some((st) => {
-            if (st.kind !== "mortar" || st.destroyed) return false;
-            const d = Math.hypot(wp.x - st.x, wp.y - st.y);
-            return d >= cfg.mortar.minRange && d <= cfg.mortar.range;
-          });
-          if (!reach) toast("No mortar can reach there");
-        }
+        const res = aimMortars(state, cfg, wp);
+        if (res.ok && res.action === "freed") toast("Mortar back on automatic");
+        else if (!res.ok && res.reason === "out-of-reach") toast("No mortar can reach there");
         return;
       }
       if (tile && structureAt(state, tile.col, tile.row)) toast(MANAGE_MESSAGES["assault-active"]);

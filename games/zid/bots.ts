@@ -20,6 +20,11 @@ import {
   upgradeTurret,
   type GameState,
   type StructureKind,
+  type UpgradePathId,
+  UPGRADE_PATHS,
+  buildLimit,
+  countKind,
+  upgradeBase,
 } from "./sim.js";
 
 export type Player = (s: GameState, cfg: GameConfig) => void;
@@ -47,30 +52,46 @@ function nextWeapon(s: GameState): StructureKind {
   return s.wave >= 3 && weapons % 3 === 2 ? "mortar" : "machine-gun";
 }
 
+/**
+ * Build the preferred weapon, or the other one if the preferred kind is at
+ * its cap; if both are capped, upgrade the base instead.
+ */
+function buildWeapon(s: GameState, cfg: GameConfig): boolean {
+  const first = nextWeapon(s);
+  for (const kind of [first, first === "mortar" ? "machine-gun" : "mortar"] as const) {
+    if (countKind(s, kind) < buildLimit(s, cfg, kind)!) return buildNearest(s, cfg, kind);
+  }
+  return upgradeBase(s, cfg).ok;
+}
+
 /** Repairs first, then builds turrets near the stronghold, then buys the cheapest available upgrade. */
 export const sensiblePlayer: Player = (s, cfg) => {
   for (const st of s.structures) if (st.destroyed || st.hp < st.maxHp) repair(s, cfg, { kind: "structure", id: st.id });
   if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
   for (let guard = 0; guard < 200; guard++) {
     const want = 2 + Math.floor((s.wave - 1) / 2);
-    if (s.structures.length < want && buildNearest(s, cfg, nextWeapon(s))) continue;
-    let best: { id: number; path: "speed" | "strength"; cost: number } | null = null;
+    if (s.structures.length < want && buildWeapon(s, cfg)) continue;
+    let best: { id: number; path: UpgradePathId; cost: number } | null = null;
     for (const st of s.structures) {
-      for (const path of ["speed", "strength"] as const) {
+      for (const path of UPGRADE_PATHS) {
         if (checkUpgrade(s, cfg, st.id, path) !== null) continue;
         const cost = nextUpgradeCost(cfg, st, path)!;
         if (!best || cost < best.cost) best = { id: st.id, path, cost };
       }
     }
     if (best && upgradeTurret(s, cfg, best.id, best.path).ok) continue;
-    if (buildNearest(s, cfg, nextWeapon(s))) continue;
+    if (buildWeapon(s, cfg)) continue;
     break;
   }
 };
 
-/** Only ever builds turrets; never upgrades. */
+/** Only ever builds turrets (upgrading the base when full); never upgrades turrets. */
 export const buildOnlyPlayer: Player = (s, cfg) => {
-  while (s.currency >= cfg.turret.cost && buildNearest(s, cfg));
+  for (let guard = 0; guard < 100; guard++) {
+    if (countKind(s, "machine-gun") < buildLimit(s, cfg, "machine-gun")!) {
+      if (!buildNearest(s, cfg)) break;
+    } else if (!upgradeBase(s, cfg).ok) break;
+  }
 };
 
 /** Builds the starting turrets and nothing else. */

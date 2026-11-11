@@ -13,16 +13,23 @@ import { wavePlan } from "./waves.js";
 /** The run is endless: prep -> warning -> wave repeats until the stronghold falls ("lost"). */
 export type Phase = "prep" | "warning" | "wave" | "lost";
 
-export type UpgradePathId = "speed" | "strength";
+export type UpgradePathId = "speed" | "strength" | "range";
+export const UPGRADE_PATHS: readonly UpgradePathId[] = ["speed", "strength", "range"];
 
 export interface Turret {
   cooldown: number;
   /** Upgrade levels; a turret may take both paths. */
   speed: number;
   strength: number;
+  /** Range level (machine gun only). */
+  range: number;
   /** Radians; for drawing only. */
   aim: number;
   targetId: number | null;
+  /** Mortars only: where the player told this mortar to fire this assault. */
+  aimPoint: { x: number; y: number } | null;
+  /** Game time of the last shot, for recoil, flash and smoke. */
+  lastShot: number;
 }
 
 export type StructureKind = "machine-gun" | "mortar" | "barricade";
@@ -59,6 +66,14 @@ export interface Shell {
   left: number;
   damage: number;
   radius: number;
+}
+
+/** A floating "+N" where a zombie dropped Supplies, for drawing only. */
+export interface Popup {
+  x: number;
+  y: number;
+  amount: number;
+  life: number;
 }
 
 /** A brief explosion marker, for drawing only. */
@@ -112,7 +127,7 @@ export interface GameState {
   /** Total simulated seconds. */
   time: number;
   currency: number;
-  stronghold: { x: number; y: number; halfSize: number; hp: number; maxHp: number };
+  stronghold: { x: number; y: number; halfSize: number; hp: number; maxHp: number; level: number };
   structures: Structure[];
   nextStructureId: number;
   /** Bumped whenever anything that affects zombie pathing changes. */
@@ -121,8 +136,8 @@ export interface GameState {
   projectiles: Projectile[];
   shells: Shell[];
   blasts: Blast[];
-  /** Where the player told the mortars to fire this assault; null = automatic. */
-  mortarAim: { x: number; y: number } | null;
+  /** Floating "+N" Supplies from kills, for drawing only. */
+  popups: Popup[];
   spawns: Spawn[];
   nextSpawn: number;
   nextEnemyId: number;
@@ -171,7 +186,7 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     wavesCleared: 0,
     time: 0,
     currency: cfg.economy.startCurrency,
-    stronghold: { x: sh.x, y: sh.y, halfSize: sh.halfSize, hp: sh.maxHp, maxHp: sh.maxHp },
+    stronghold: { x: sh.x, y: sh.y, halfSize: sh.halfSize, hp: sh.levels[0]?.maxHp ?? sh.maxHp, maxHp: sh.levels[0]?.maxHp ?? sh.maxHp, level: 0 },
     structures: [],
     nextStructureId: 1,
     layoutVersion: 0,
@@ -179,7 +194,7 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     projectiles: [],
     shells: [],
     blasts: [],
-    mortarAim: null,
+    popups: [],
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,
@@ -250,6 +265,7 @@ export type BuildRejection =
   | "assault-active"
   | Exclude<TileStatus, "buildable">
   | "occupied"
+  | "limit-reached"
   | "insufficient-funds";
 
 export type BuildResult = { ok: true; structure: Structure } | { ok: false; reason: BuildRejection };
@@ -274,8 +290,56 @@ export function checkBuild(s: GameState, cfg: GameConfig, col: number, row: numb
   const status = tileStatus(cfg, col, row);
   if (status !== "buildable") return status;
   if (structureAt(s, col, row)) return "occupied";
+  const limit = buildLimit(s, cfg, kind);
+  if (limit !== null && countKind(s, kind) >= limit) return "limit-reached";
   if (s.currency < buildCost(cfg, kind)) return "insufficient-funds";
   return null;
+}
+
+/** How many of this kind the current base level allows; null = no limit. Rubble counts. */
+export function buildLimit(s: GameState, cfg: GameConfig, kind: StructureKind): number | null {
+  if (kind === "barricade") return null;
+  const lvl = baseLevel(s, cfg);
+  return kind === "mortar" ? lvl.mortars : lvl.machineGuns;
+}
+
+export function countKind(s: GameState, kind: StructureKind): number {
+  return s.structures.filter((st) => st.kind === kind).length;
+}
+
+function baseLevel(s: GameState, cfg: GameConfig) {
+  const levels = cfg.stronghold.levels;
+  return levels[Math.min(s.stronghold.level, levels.length - 1)]!;
+}
+
+/** Price of the next base upgrade, or null at the top level. */
+export function nextBaseUpgradeCost(s: GameState, cfg: GameConfig): number | null {
+  const next = cfg.stronghold.levels[s.stronghold.level + 1];
+  return next ? next.cost : null;
+}
+
+export function checkBaseUpgrade(s: GameState, cfg: GameConfig): ManageRejection | null {
+  if (s.phase === "lost") return "run-over";
+  if (s.phase === "wave") return "assault-active";
+  const cost = nextBaseUpgradeCost(s, cfg);
+  if (cost === null) return "max-level";
+  if (s.currency < cost) return "insufficient-funds";
+  return null;
+}
+
+/**
+ * Upgrade the base: more machine guns and mortars allowed, and more
+ * stronghold health (the added health comes already repaired).
+ */
+export function upgradeBase(s: GameState, cfg: GameConfig): ManageResult {
+  const reason = checkBaseUpgrade(s, cfg);
+  if (reason) return { ok: false, reason };
+  s.currency -= nextBaseUpgradeCost(s, cfg)!;
+  s.stronghold.level++;
+  const max = baseLevel(s, cfg).maxHp;
+  s.stronghold.hp += max - s.stronghold.maxHp;
+  s.stronghold.maxHp = max;
+  return { ok: true };
 }
 
 /**
@@ -302,7 +366,7 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
     destroyed: false,
     spent: cost,
     reinforce: 0,
-    turret: kind !== "barricade" ? { cooldown: 0, speed: 0, strength: 0, aim: -Math.PI / 2, targetId: null } : null,
+    turret: kind !== "barricade" ? { cooldown: 0, speed: 0, strength: 0, range: 0, aim: -Math.PI / 2, targetId: null, aimPoint: null, lastShot: -1e9 } : null,
   };
   s.structures.push(structure);
   s.layoutVersion++;
@@ -330,6 +394,7 @@ export type ManageRejection =
   | "no-such-structure"
   | "not-a-turret"
   | "not-a-barricade"
+  | "not-for-mortar"
   | "destroyed"
   | "nothing-to-repair"
   | "max-level"
@@ -343,6 +408,7 @@ export function structureById(s: GameState, id: number): Structure | null {
 /** Cost of the next level on a path, or null at max level. */
 export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePathId): number | null {
   if (!st.turret) return null;
+  if (path === "range" && st.kind === "mortar") return null;
   const costs = cfg.upgrades[path].costs;
   const level = st.turret[path];
   if (level >= costs.length) return null;
@@ -358,6 +424,7 @@ export function checkUpgrade(s: GameState, cfg: GameConfig, id: number, path: Up
   const st = structureById(s, id);
   if (!st) return "no-such-structure";
   if (!st.turret) return "not-a-turret";
+  if (path === "range" && st.kind === "mortar") return "not-for-mortar";
   if (st.destroyed) return "destroyed";
   const cost = nextUpgradeCost(cfg, st, path);
   if (cost === null) return "max-level";
@@ -507,36 +574,67 @@ export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "m
   };
 }
 
-export type AimRejection = "not-in-assault" | "no-mortars";
+export type AimRejection = "not-in-assault" | "no-mortars" | "out-of-reach";
+export type AimResult = { ok: true; action: "aimed" | "freed"; mortarId: number } | { ok: false; reason: AimRejection };
 
-/**
- * Point the mortars at a spot on the map for the rest of this assault, or
- * pass null to return them to automatic targeting. Only during an assault,
- * and only if at least one working mortar exists. Mortars that can't reach
- * the spot (too close or too far) keep choosing their own targets.
- */
-export function aimMortars(s: GameState, cfg: GameConfig, point: { x: number; y: number } | null): { ok: true } | { ok: false; reason: AimRejection } {
-  if (s.phase !== "wave") return { ok: false, reason: "not-in-assault" };
-  if (!s.structures.some((st) => st.kind === "mortar" && !st.destroyed)) return { ok: false, reason: "no-mortars" };
-  s.mortarAim = point
-    ? { x: Math.min(cfg.world.width, Math.max(0, point.x)), y: Math.min(cfg.world.height, Math.max(0, point.y)) }
-    : null;
-  return { ok: true };
+/** Whether a working mortar can drop a shell on this point. */
+export function mortarReaches(cfg: GameConfig, st: Structure, x: number, y: number): boolean {
+  const d = Math.hypot(x - st.x, y - st.y);
+  return st.kind === "mortar" && !st.destroyed && d >= cfg.mortar.minRange && d <= cfg.mortar.range;
 }
 
+/** Distance within which a tap counts as tapping an existing crosshair. */
+export const AIM_TAP_RADIUS = 60;
+
 /**
- * Where a mortar fires next: the player's aim point if it is within reach,
- * otherwise the zombie in reach with the most others inside a blast radius
- * (ties: closest to the stronghold, then lowest id). Null if nothing is in
- * reach.
+ * Tap-to-aim during an assault, one mortar per tap ("split fire"):
+ * - tapping an existing crosshair frees that mortar back to automatic;
+ * - otherwise the closest mortar that can reach the spot and isn't aimed yet
+ *   takes it; if every mortar in reach is already aimed, the closest one is
+ *   moved here.
+ * Crosshairs are cleared when the wave ends.
  */
+export function aimMortars(s: GameState, cfg: GameConfig, point: { x: number; y: number }): AimResult {
+  if (s.phase !== "wave") return { ok: false, reason: "not-in-assault" };
+  const mortars = s.structures.filter((st) => st.kind === "mortar" && !st.destroyed && st.turret);
+  if (mortars.length === 0) return { ok: false, reason: "no-mortars" };
+  let hit: Structure | null = null;
+  let hitD = AIM_TAP_RADIUS;
+  for (const m of mortars) {
+    const a = m.turret!.aimPoint;
+    if (!a) continue;
+    const d = Math.hypot(point.x - a.x, point.y - a.y);
+    if (d <= hitD) {
+      hit = m;
+      hitD = d;
+    }
+  }
+  if (hit) {
+    hit.turret!.aimPoint = null;
+    return { ok: true, action: "freed", mortarId: hit.id };
+  }
+  const reach = mortars
+    .filter((m) => mortarReaches(cfg, m, point.x, point.y))
+    .sort((a, b) => Math.hypot(point.x - a.x, point.y - a.y) - Math.hypot(point.x - b.x, point.y - b.y) || a.id - b.id);
+  if (reach.length === 0) return { ok: false, reason: "out-of-reach" };
+  const pick = reach.find((m) => !m.turret!.aimPoint) ?? reach[0]!;
+  pick.turret!.aimPoint = { x: point.x, y: point.y };
+  return { ok: true, action: "aimed", mortarId: pick.id };
+}
+
+/** Release every mortar back to automatic. */
+export function releaseMortars(s: GameState): void {
+  for (const st of s.structures) if (st.turret) st.turret.aimPoint = null;
+}
+
 export function mortarTarget(s: GameState, cfg: GameConfig, st: Structure): { x: number; y: number } | null {
   const m = cfg.mortar;
   const inReach = (x: number, y: number) => {
     const d = Math.hypot(x - st.x, y - st.y);
     return d >= m.minRange && d <= m.range;
   };
-  if (s.mortarAim && inReach(s.mortarAim.x, s.mortarAim.y)) return s.mortarAim;
+  const aim = st.turret?.aimPoint;
+  if (aim && inReach(aim.x, aim.y)) return aim;
   let best: Enemy | null = null;
   let bestCount = 0;
   let bestD = Infinity;
@@ -586,10 +684,10 @@ export function startWaveNow(s: GameState, _cfg: GameConfig): void {
  * Targeting rule (one simple default): the enemy in range that is closest to
  * the stronghold. Ties go to the lowest id, so the choice is deterministic.
  */
-export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: number }): Enemy | null {
+export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: number }, range = cfg.turret.range): Enemy | null {
   let best: Enemy | null = null;
   let bestD = Infinity;
-  const r2 = cfg.turret.range * cfg.turret.range;
+  const r2 = range * range;
   for (const e of s.enemies) {
     if (e.hp <= 0) continue;
     const dx = e.x - from.x;
@@ -602,6 +700,12 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
     }
   }
   return best;
+}
+
+/** A machine gun's reach after Range upgrades (mortars use their own fixed range). */
+export function turretRange(cfg: GameConfig, st: Structure): number {
+  if (st.kind === "mortar") return cfg.mortar.range;
+  return cfg.turret.range * (1 + cfg.upgrades.range.perLevel * (st.turret?.range ?? 0));
 }
 
 /** Roll a kill's random, type-weighted Supplies drop from the seeded RNG. */
@@ -621,10 +725,14 @@ export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: num
     const drop = rollDrop(s, cfg, e.type);
     s.currency += drop;
     s.earned += drop;
+    if (drop > 0 && s.popups.length < 80) s.popups.push({ x: e.x, y: e.y, amount: drop, life: POPUP_SECONDS });
     return true;
   }
   return false;
 }
+
+export const POPUP_SECONDS = 1;
+export const BLAST_SECONDS = 0.9;
 
 /** Distance from a point to the stronghold's square edge (0 when touching). */
 function distanceToStronghold(s: GameState, x: number, y: number): number {
@@ -688,7 +796,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.phase = "lost";
   } else if (s.phase === "wave" && s.nextSpawn >= s.spawns.length && s.enemies.length === 0) {
     // Wave cleared: back to preparation for the next one.
-    s.mortarAim = null;
+    releaseMortars(s);
     s.shells = [];
     s.wavesCleared++;
     s.wave++;
@@ -794,7 +902,7 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
     const stats = turretStats(cfg, tur);
     const interval = 1 / stats.fireRate;
     tur.cooldown -= dt;
-    const target = pickTarget(s, cfg, slot);
+    const target = pickTarget(s, cfg, slot, turretRange(cfg, slot));
     tur.targetId = target ? target.id : null;
     if (!target) {
       if (tur.cooldown < 0) tur.cooldown = 0;
@@ -803,6 +911,7 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
     tur.aim = Math.atan2(target.y - slot.y, target.x - slot.x);
     while (tur.cooldown <= 0) {
       tur.cooldown += interval;
+      tur.lastShot = s.time;
       if (s.projectiles.length >= cfg.limits.maxProjectiles) continue;
       const cos = Math.cos(tur.aim);
       const sin = Math.sin(tur.aim);
@@ -833,6 +942,7 @@ function stepMortar(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret,
   if (tur.cooldown > 0) return;
   tur.cooldown += 1 / stats.fireRate;
   if (tur.cooldown < 0) tur.cooldown = 0;
+  tur.lastShot = s.time;
   const flight = m.shellBaseSeconds + Math.hypot(target.x - slot.x, target.y - slot.y) / m.shellSpeed;
   s.shells.push({ sx: slot.x, sy: slot.y, tx: target.x, ty: target.y, total: flight, left: flight, damage: stats.damage, radius: m.blastRadius });
   s.shotsFired++;
@@ -855,15 +965,23 @@ function stepShells(s: GameState, cfg: GameConfig, dt: number): void {
       const dy = e.y - sh.ty;
       if (dx * dx + dy * dy <= r2) damageEnemy(s, cfg, e, sh.damage);
     }
-    s.blasts.push({ x: sh.tx, y: sh.ty, r: sh.radius, life: 0.35 });
+    s.blasts.push({ x: sh.tx, y: sh.ty, r: sh.radius, life: BLAST_SECONDS });
   }
   s.shells = kept;
 }
 
 function stepBlasts(s: GameState, dt: number): void {
-  if (s.blasts.length === 0) return;
-  for (const b of s.blasts) b.life -= dt;
-  s.blasts = s.blasts.filter((b) => b.life > 0);
+  if (s.blasts.length > 0) {
+    for (const b of s.blasts) b.life -= dt;
+    s.blasts = s.blasts.filter((b) => b.life > 0);
+  }
+  if (s.popups.length > 0) {
+    for (const p of s.popups) {
+      p.life -= dt;
+      p.y -= 50 * dt;
+    }
+    s.popups = s.popups.filter((p) => p.life > 0);
+  }
 }
 
 function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {

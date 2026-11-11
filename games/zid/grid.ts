@@ -48,7 +48,7 @@ export function pointInPolygon(x: number, y: number, poly: readonly (readonly [n
   return inside;
 }
 
-function overlapsStronghold(cfg: GameConfig, col: number, row: number): boolean {
+export function overlapsStronghold(cfg: GameConfig, col: number, row: number): boolean {
   const t = cfg.construction.tileSize;
   const sh = cfg.stronghold;
   const x0 = col * t;

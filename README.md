@@ -24,6 +24,13 @@ The smallest playable proof, fully offline:
 - **Turret menu** (tap a turret between waves): Speed and Damage upgrades, three levels each. A turret can take both. **Recycle** removes the turret with no refund and needs a second tap.
 - **Balance:** `node scripts/balance.mjs [seeds]` plays scripted runs and prints survival and per-wave numbers. Current provisional target: a sensible player usually falls between waves 10 and 15.
 
+### Defences update
+
+- **Barricades** (20) on any buildable tile; **reinforce** twice for more health.
+- **Everything you build has health.** Zombies take any open route to the stronghold; if you wall it in completely they break through the weakest blocker. Turrets block too.
+- **Destroyed structures become rubble**: they keep the tile and stop working. **Rebuild** (60% of what you spent, upgrades kept) or **Recycle** (+25%). Recycling an intact structure returns 50%.
+- **Repairs** between waves for structures and the stronghold, partial if supplies run short.
+
 Not in this milestone: free placement (Zone B), other turrets, barricades, other enemies, the adaptive scheduler, permanent progression, saves, sign-in, the portal, expeditions, monetization and sound.
 
 ### URL options

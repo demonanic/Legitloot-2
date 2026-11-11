@@ -6,7 +6,18 @@
 
 import type { GameConfig } from "./config.js";
 import { buildableTiles, tileCenter, type Tile } from "./grid.js";
-import { buildTurret, checkUpgrade, createState, nextUpgradeCost, startWaveNow, step, structureAt, upgradeTurret, type GameState } from "./sim.js";
+import {
+  buildTurret,
+  checkUpgrade,
+  createState,
+  nextUpgradeCost,
+  repair,
+  startWaveNow,
+  step,
+  structureAt,
+  upgradeTurret,
+  type GameState,
+} from "./sim.js";
 
 export type Player = (s: GameState, cfg: GameConfig) => void;
 
@@ -26,8 +37,10 @@ function buildNearest(s: GameState, cfg: GameConfig): boolean {
   return !!t && buildTurret(s, cfg, t.col, t.row).ok;
 }
 
-/** Builds turrets near the stronghold, then buys the cheapest available upgrade. */
+/** Repairs first, then builds turrets near the stronghold, then buys the cheapest available upgrade. */
 export const sensiblePlayer: Player = (s, cfg) => {
+  for (const st of s.structures) if (st.destroyed || st.hp < st.maxHp) repair(s, cfg, { kind: "structure", id: st.id });
+  if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
   for (let guard = 0; guard < 200; guard++) {
     const want = 2 + Math.floor((s.wave - 1) / 2);
     if (s.structures.length < want && s.currency >= cfg.turret.cost && buildNearest(s, cfg)) continue;

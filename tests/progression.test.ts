@@ -75,7 +75,7 @@ test("upgrade: one turret can take both paths, and they multiply", () => {
   const { s, id } = withTurret();
   assert.ok(upgradeTurret(s, cfg, id, "speed").ok);
   assert.ok(upgradeTurret(s, cfg, id, "strength").ok);
-  const st = turretStats(cfg, s.structures[0]!.turret);
+  const st = turretStats(cfg, s.structures[0]!.turret!);
   assert.equal(st.fireRate, cfg.turret.fireRate * (1 + cfg.upgrades.speed.perLevel));
   assert.equal(st.damage, cfg.turret.damage * (1 + cfg.upgrades.strength.perLevel));
 });
@@ -94,7 +94,7 @@ test("upgrade: costs are deducted per level and max level is enforced", () => {
   const before = s.currency;
   assert.deepEqual(upgradeTurret(s, cfg, id, "speed"), { ok: false, reason: "max-level" });
   assert.equal(s.currency, before);
-  assert.equal(s.structures[0]!.turret.speed, costs.length);
+  assert.equal(s.structures[0]!.turret!.speed, costs.length);
   assert.ok(spent > 0);
 });
 
@@ -108,17 +108,18 @@ test("upgrade: refused without enough supplies, during assaults and for unknown 
   startWaveNow(s, cfg);
   assert.deepEqual(upgradeTurret(s, cfg, id, "speed"), { ok: false, reason: "assault-active" });
   assert.equal(s.currency, 1000);
-  assert.equal(s.structures[0]!.turret.speed, 0);
+  assert.equal(s.structures[0]!.turret!.speed, 0);
 });
 
 // --- Recycle --------------------------------------------------------------
 
-test("recycle: removes the turret, frees the tile, refunds nothing", () => {
+test("recycle: removes the turret, frees the tile, returns a share of everything spent", () => {
   const { s, id } = withTurret();
   upgradeTurret(s, cfg, id, "speed");
+  const spent = cfg.turret.cost + cfg.upgrades.speed.costs[0]!;
   const before = s.currency;
   assert.deepEqual(recycleStructure(s, cfg, id), { ok: true });
-  assert.equal(s.currency, before, "no refund");
+  assert.equal(s.currency - before, Math.floor(spent * cfg.recycle.intactShare));
   assert.equal(structureAt(s, ...T), null);
   assert.ok(buildTurret(s, cfg, ...T).ok, "the tile can be built on again");
 });

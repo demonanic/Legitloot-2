@@ -1,5 +1,5 @@
 /**
- * Browser entry point for Milestone 1: one wave, playable offline.
+ * Browser entry point: the game, playable offline.
  *
  * URL options:
  *   ?seed=123   fixed spawn layout
@@ -12,16 +12,19 @@ import { bindVisibility, createLoop } from "../../engine/loop/loop.js";
 import { createRenderer } from "../../engine/render/render.js";
 import { baseConfig, stressConfig } from "./config.js";
 import { tileAt, tileStatus } from "./grid.js";
+import type { PanelAction } from "./panel.js";
 import {
-  buildTurret,
+  buildStructure,
   createState,
   recycleStructure,
+  reinforceBarricade,
+  repair,
   startWaveNow,
   step,
   structureAt,
   upgradeTurret,
   type GameState,
-  type UpgradePathId,
+  type ManageResult,
 } from "./sim.js";
 import { createStressRun } from "./stress.js";
 import { BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
@@ -58,42 +61,55 @@ function selectedStructure() {
   return sel ? structureAt(state, sel.col, sel.row) : null;
 }
 
-function upgrade(path: UpgradePathId): void {
-  const st = selectedStructure();
-  if (!st) return;
-  const res = upgradeTurret(state, cfg, st.id, path);
+function report(res: ManageResult): void {
   if (!res.ok) toast(MANAGE_MESSAGES[res.reason]);
+}
+
+/** Every menu action goes through a validated simulation command. */
+function runPanelAction(action: PanelAction): void {
+  const sel = view.selected;
+  if (!sel) return;
+  const st = selectedStructure();
+  if (action.kind !== "recycle") view.recycleArmedUntil = 0;
+  switch (action.kind) {
+    case "close":
+      view.selected = null;
+      return;
+    case "build-turret":
+    case "build-barricade": {
+      const res = buildStructure(state, cfg, action.kind === "build-turret" ? "machine-gun" : "barricade", sel.col, sel.row);
+      if (res.ok) view.selected = null;
+      else toast(BUILD_MESSAGES[res.reason]);
+      return;
+    }
+    case "upgrade":
+      if (st) report(upgradeTurret(state, cfg, st.id, action.path));
+      return;
+    case "reinforce":
+      if (st) report(reinforceBarricade(state, cfg, st.id));
+      return;
+    case "repair":
+      report(repair(state, cfg, st ? { kind: "structure", id: st.id } : { kind: "stronghold" }));
+      return;
+    case "recycle": {
+      if (!st) return;
+      // Destructive: require a second tap within 3 seconds.
+      if (view.recycleArmedUntil <= state.time) {
+        view.recycleArmedUntil = state.time + 3;
+        return;
+      }
+      view.recycleArmedUntil = 0;
+      const res = recycleStructure(state, cfg, st.id);
+      if (res.ok) view.selected = null;
+      else report(res);
+      return;
+    }
+  }
 }
 
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
-  confirmBuild: () => {
-    const sel = view.selected;
-    if (!sel) return;
-    // The simulation validates again; the panel's state is only a preview.
-    const res = buildTurret(state, cfg, sel.col, sel.row);
-    if (res.ok) view.selected = null;
-    else toast(BUILD_MESSAGES[res.reason]);
-  },
-  cancelSelection: () => {
-    view.selected = null;
-    view.recycleArmedUntil = 0;
-  },
-  upgradeSpeed: () => upgrade("speed"),
-  upgradeStrength: () => upgrade("strength"),
-  recycle: () => {
-    const st = selectedStructure();
-    if (!st) return;
-    // Destructive and unrefunded: require a second tap within 3 seconds.
-    if (view.recycleArmedUntil <= state.time) {
-      view.recycleArmedUntil = state.time + 3;
-      return;
-    }
-    view.recycleArmedUntil = 0;
-    const res = recycleStructure(state, cfg, st.id);
-    if (res.ok) view.selected = null;
-    else toast(MANAGE_MESSAGES[res.reason]);
-  },
+  panel: (action) => runPanelAction(action),
   restart: () => {
     state = newRun();
     view.toast = null;

@@ -80,7 +80,25 @@ export interface GameConfig {
     damage: number;
     projectileSpeed: number;
     radius: number;
+    maxHp: number;
   };
+  /** Barricades block movement; reinforcing raises their maximum health. */
+  barricade: { cost: number; maxHp: number; reinforce: UpgradePath };
+  /**
+   * Repairs and recycling, as shares of everything spent on a structure
+   * (build + upgrades + reinforcement). Repairs restore health in
+   * proportion; a structure can be partly repaired if supplies run short.
+   */
+  repair: {
+    /** Full repair of an intact structure from 0 health costs this share of what was spent. */
+    structureShare: number;
+    /** Rebuilding rubble (with its upgrades) costs this share of what was spent. */
+    rubbleShare: number;
+    strongholdCostPerHp: number;
+  };
+  recycle: { intactShare: number; rubbleShare: number };
+  /** Zombies take any open route; a blocked tile costs this much (plus its health) to path through. */
+  pathing: { blockedTileCost: number };
   /** Turret upgrades. A turret may take both paths. Preparation only. */
   upgrades: { speed: UpgradePath; strength: UpgradePath };
   enemies: Record<EnemyType, EnemyStats>;
@@ -112,7 +130,11 @@ export const baseConfig: GameConfig = {
     ],
   },
   economy: { startCurrency: 100 },
-  turret: { cost: 50, range: 300, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22 },
+  turret: { cost: 50, range: 300, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22, maxHp: 120 },
+  barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
+  repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25 },
+  recycle: { intactShare: 0.5, rubbleShare: 0.25 },
+  pathing: { blockedTileCost: 1000 },
   upgrades: {
     // tuned: per supply spent, an upgrade is roughly as strong as a new turret,
     // and the two paths multiply, so investing in one turret pays off.

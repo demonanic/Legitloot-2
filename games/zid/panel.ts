@@ -26,6 +26,7 @@ export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "close";
 
 export type PanelAction =
   | { kind: "build-turret" }
+  | { kind: "build-mortar" }
   | { kind: "build-barricade" }
   | { kind: "upgrade"; path: "speed" | "strength" }
   | { kind: "reinforce" }
@@ -80,21 +81,23 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
 
   if (!st) {
     const turretWhy = checkBuild(s, cfg, sel.col, sel.row, "machine-gun");
+    const mortarWhy = checkBuild(s, cfg, sel.col, sel.row, "mortar");
     const barrWhy = checkBuild(s, cfg, sel.col, sel.row, "barricade");
     const blocked = turretWhy && turretWhy !== "insufficient-funds" ? turretWhy : null;
     return {
       title: blocked ? "Can't build here" : "Build here",
       note: blocked,
       buttons: [
-        { slot: "a1", label: `Turret · ${buildCost(cfg, "machine-gun")}`, enabled: !turretWhy, action: { kind: "build-turret" } },
-        { slot: "b1", label: `Barricade · ${buildCost(cfg, "barricade")}`, enabled: !barrWhy, action: { kind: "build-barricade" } },
+        { slot: "a0", label: `Turret · ${buildCost(cfg, "machine-gun")}`, enabled: !turretWhy, action: { kind: "build-turret" } },
+        { slot: "b0", label: `Mortar · ${buildCost(cfg, "mortar")}`, enabled: !mortarWhy, action: { kind: "build-mortar" } },
+        { slot: "a1", label: `Barricade · ${buildCost(cfg, "barricade")}`, enabled: !barrWhy, action: { kind: "build-barricade" } },
         close,
       ],
       target: { kind: "tile" },
     };
   }
 
-  const name = st.kind === "barricade" ? "Barricade" : "Machine gun";
+  const name = st.kind === "barricade" ? "Barricade" : st.kind === "mortar" ? "Mortar" : "Machine gun";
   if (st.destroyed) {
     return {
       title: `${name} · destroyed (rubble)`,
@@ -105,7 +108,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
   }
 
   if (st.turret) {
-    const stats = turretStats(cfg, st.turret);
+    const stats = turretStats(cfg, st.turret, st.kind);
     const up = (slot: PanelSlot, label: string, path: "speed" | "strength"): PanelButton => {
       const cost = nextUpgradeCost(cfg, st, path);
       const max = cfg.upgrades[path].costs.length;

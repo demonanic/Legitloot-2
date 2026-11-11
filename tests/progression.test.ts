@@ -257,8 +257,11 @@ test("balance: a sensible player typically falls inside the target range (20 see
 test("balance: doing nothing after wave 1 loses early; investing matters", () => {
   const passive = playRun(cfg, 1, passivePlayer, 40).defeatWave!;
   const build = playRun(cfg, 1, buildOnlyPlayer, 40).defeatWave!;
+  const sensible = playRun(cfg, 1, sensiblePlayer, 40).defeatWave!;
   assert.ok(passive <= 5, `passive lasted to wave ${passive}`);
-  assert.ok(build > passive + 4);
+  // Building helps; building, upgrading and repairing helps far more.
+  assert.ok(build > passive + 2, `build-only ${build} vs passive ${passive}`);
+  assert.ok(sensible > build + 3, `sensible ${sensible} vs build-only ${build}`);
 });
 
 test("economy: supplies never go negative across whole runs", () => {

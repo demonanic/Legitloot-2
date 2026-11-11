@@ -31,6 +31,10 @@ const C = {
   runner: "#a9b88e",
   brute: "#3f4a33",
   bullet: "#e9d68d",
+  mortar: "#8d8a6e",
+  shell: "#f1eee3",
+  blast: "#e2884a",
+  aim: "#e2584a",
   hudBg: "rgba(10,11,10,0.72)",
   text: "#eef0ea",
   quiet: "#a3a89f",
@@ -251,7 +255,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   for (const st of s.structures) {
     if (!st.turret || st.destroyed) continue;
     ctx.beginPath();
-    ctx.arc(st.x, st.y, cfg.turret.range, 0, Math.PI * 2);
+    ctx.arc(st.x, st.y, st.kind === "mortar" ? cfg.mortar.range : cfg.turret.range, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -267,10 +271,18 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.strokeStyle = "rgba(241,238,227,0.4)";
     ctx.lineWidth = 2;
     if (selStructure.turret && !selStructure.destroyed) {
+      const isMortar = selStructure.kind === "mortar";
       ctx.setLineDash([8, 8]);
       ctx.beginPath();
-      ctx.arc(selStructure.x, selStructure.y, cfg.turret.range, 0, Math.PI * 2);
+      ctx.arc(selStructure.x, selStructure.y, isMortar ? cfg.mortar.range : cfg.turret.range, 0, Math.PI * 2);
       ctx.stroke();
+      if (isMortar) {
+        // Dead zone: the mortar can't hit anything this close.
+        ctx.strokeStyle = "rgba(208,88,74,0.5)";
+        ctx.beginPath();
+        ctx.arc(selStructure.x, selStructure.y, cfg.mortar.minRange, 0, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.setLineDash([]);
     }
   } else if (sel && model?.target.kind === "tile" && s.phase !== "lost") {
@@ -335,7 +347,25 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       if (sl.hp < sl.maxHp) bar(ctx, sl.x - half, sl.y - half - 10, half * 2, 6, sl.hp / sl.maxHp, C.warn);
       continue;
     }
-    {
+    if (sl.kind === "mortar") {
+      if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
+      const m = cfg.mortar.radius;
+      ctx.fillStyle = C.mortar;
+      ctx.strokeStyle = C.walkerEdge;
+      ctx.lineWidth = 3;
+      roundRect(ctx, sl.x - m, sl.y - m, m * 2, m * 2, 10);
+      ctx.fill();
+      ctx.stroke();
+      // Short, fat tube pointing at the target.
+      ctx.fillStyle = C.barrel;
+      ctx.beginPath();
+      ctx.arc(sl.x + Math.cos(sl.turret.aim) * 8, sl.y + Math.sin(sl.turret.aim) * 8, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = C.walkerEdge;
+      ctx.beginPath();
+      ctx.arc(sl.x + Math.cos(sl.turret.aim) * 8, sl.y + Math.sin(sl.turret.aim) * 8, 6, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
       if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
       ctx.fillStyle = C.turret;
       ctx.beginPath();
@@ -349,6 +379,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       ctx.lineTo(sl.x + Math.cos(sl.turret.aim) * (cfg.turret.radius + 12), sl.y + Math.sin(sl.turret.aim) * (cfg.turret.radius + 12));
       ctx.stroke();
       ctx.lineCap = "butt";
+    }
+    {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
       for (let i = 0; i < sl.turret.speed; i++) {
         ctx.fillStyle = C.warn;
@@ -384,6 +416,47 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
   ctx.stroke();
 
+  // Mortar shells: a dot that rises and falls between mortar and landing spot,
+  // with a shadow ring growing at the landing spot.
+  for (const sh of s.shells) {
+    const t = 1 - sh.left / sh.total;
+    const x = sh.sx + (sh.tx - sh.sx) * t;
+    const y = sh.sy + (sh.ty - sh.sy) * t - Math.sin(Math.PI * t) * 120;
+    ctx.strokeStyle = "rgba(226,136,74,0.35)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sh.tx, sh.ty, sh.radius * t, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = C.shell;
+    ctx.beginPath();
+    ctx.arc(x, y, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const b of s.blasts) {
+    const a = Math.max(0, b.life / 0.35);
+    ctx.fillStyle = `rgba(226,136,74,${0.55 * a})`;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r * (1.15 - 0.3 * a), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // The player's mortar aim point: crosshair.
+  if (s.mortarAim && s.phase === "wave") {
+    const { x, y } = s.mortarAim;
+    const pulse = 0.6 + 0.4 * Math.sin(s.time * 8);
+    ctx.strokeStyle = C.aim;
+    ctx.globalAlpha = pulse;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(x, y, cfg.mortar.blastRadius, 0, Math.PI * 2);
+    ctx.moveTo(x - 30, y);
+    ctx.lineTo(x + 30, y);
+    ctx.moveTo(x, y - 30);
+    ctx.lineTo(x, y + 30);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
   // HUD.
   ctx.fillStyle = C.hudBg;
   ctx.fillRect(0, 0, W, 78);
@@ -404,6 +477,13 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.fillStyle = color;
   ctx.font = "800 28px system-ui, sans-serif";
   ctx.fillText(status, W / 2 + 40, 40);
+  if (s.phase === "wave" && s.structures.some((st) => st.kind === "mortar" && !st.destroyed)) {
+    ctx.fillStyle = C.hudBg;
+    ctx.fillRect(0, 78, W, 40);
+    ctx.fillStyle = s.mortarAim ? C.aim : C.quiet;
+    ctx.font = "700 20px system-ui, sans-serif";
+    ctx.fillText(s.mortarAim ? "Mortars aimed · tap the marker for automatic" : "Tap the map to aim mortars", W / 2, 98);
+  }
 
   const r = buttonRects(cfg);
   ctx.strokeStyle = showDiag ? C.text : C.quiet;

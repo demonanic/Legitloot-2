@@ -7,6 +7,8 @@
 import type { GameConfig } from "./config.js";
 import { buildableTiles, tileCenter, type Tile } from "./grid.js";
 import {
+  buildCost,
+  buildStructure,
   buildTurret,
   checkUpgrade,
   createState,
@@ -17,6 +19,7 @@ import {
   structureAt,
   upgradeTurret,
   type GameState,
+  type StructureKind,
 } from "./sim.js";
 
 export type Player = (s: GameState, cfg: GameConfig) => void;
@@ -32,9 +35,16 @@ function tilesByDistance(cfg: GameConfig): Tile[] {
     .map((x) => x.t);
 }
 
-function buildNearest(s: GameState, cfg: GameConfig): boolean {
+function buildNearest(s: GameState, cfg: GameConfig, kind: StructureKind = "machine-gun"): boolean {
+  if (s.currency < buildCost(cfg, kind)) return false;
   const t = tilesByDistance(cfg).find((t) => !structureAt(s, t.col, t.row));
-  return !!t && buildTurret(s, cfg, t.col, t.row).ok;
+  return !!t && buildStructure(s, cfg, kind, t.col, t.row).ok;
+}
+
+/** Every third weapon from wave 3 on is a mortar. */
+function nextWeapon(s: GameState): StructureKind {
+  const weapons = s.structures.filter((st) => st.turret).length;
+  return s.wave >= 3 && weapons % 3 === 2 ? "mortar" : "machine-gun";
 }
 
 /** Repairs first, then builds turrets near the stronghold, then buys the cheapest available upgrade. */
@@ -43,7 +53,7 @@ export const sensiblePlayer: Player = (s, cfg) => {
   if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
   for (let guard = 0; guard < 200; guard++) {
     const want = 2 + Math.floor((s.wave - 1) / 2);
-    if (s.structures.length < want && s.currency >= cfg.turret.cost && buildNearest(s, cfg)) continue;
+    if (s.structures.length < want && buildNearest(s, cfg, nextWeapon(s))) continue;
     let best: { id: number; path: "speed" | "strength"; cost: number } | null = null;
     for (const st of s.structures) {
       for (const path of ["speed", "strength"] as const) {
@@ -53,7 +63,7 @@ export const sensiblePlayer: Player = (s, cfg) => {
       }
     }
     if (best && upgradeTurret(s, cfg, best.id, best.path).ok) continue;
-    if (s.currency >= cfg.turret.cost && buildNearest(s, cfg)) continue;
+    if (buildNearest(s, cfg, nextWeapon(s))) continue;
     break;
   }
 };
@@ -71,7 +81,8 @@ export const passivePlayer: Player = (s, cfg) => {
 export interface RunResult {
   /** Wave the stronghold fell on, or null if it survived `maxWave`. */
   defeatWave: number | null;
-  perWave: { wave: number; supplies: number; damage: number }[];
+  /** Per wave: Supplies before it, stronghold damage taken, structures wrecked. */
+  perWave: { wave: number; supplies: number; damage: number; wrecked: number }[];
   earned: number;
 }
 
@@ -84,9 +95,11 @@ export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave =
     const wave = s.wave;
     const hp0 = s.stronghold.hp;
     const supplies = s.currency;
+    const intact0 = s.structures.filter((st) => !st.destroyed).length;
     startWaveNow(s, cfg);
     for (let i = 0; s.phase === "wave" && i < 30 * 600; i++) step(s, cfg, 1 / 30);
-    perWave.push({ wave, supplies, damage: hp0 - s.stronghold.hp });
+    const wrecked = Math.max(0, intact0 - s.structures.filter((st) => !st.destroyed).length);
+    perWave.push({ wave, supplies, damage: hp0 - s.stronghold.hp, wrecked });
   }
   return { defeatWave: s.phase === "lost" ? s.wave : null, perWave, earned: s.earned };
 }

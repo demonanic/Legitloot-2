@@ -317,7 +317,7 @@ test("menus: rubble offers Rebuild and Recycle; the stronghold offers Repair; em
   assert.equal(sh.buttons[0]!.action.kind, "repair");
   assert.ok(sh.buttons[0]!.enabled);
   const empty = panelModel(s, cfg, { col: 4, row: 5 });
-  assert.deepEqual(empty.buttons.map((b) => b.action.kind), ["build-turret", "build-barricade", "close"]);
+  assert.deepEqual(empty.buttons.map((b) => b.action.kind), ["build-turret", "build-mortar", "build-barricade", "close"]);
   assert.ok(empty.buttons.every((b) => b.enabled));
   s.currency = 0;
   const poor = panelModel(s, cfg, { col: 4, row: 5 });

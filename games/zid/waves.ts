@@ -15,6 +15,9 @@ export interface WavePlan {
   spawnSeconds: number;
   /** Share of spawns from one side this wave (0 = even spread). */
   lopsidedShare: number;
+  /** Share of this wave that arrives in packs, and how many per pack. */
+  packShare: number;
+  packSize: number;
 }
 
 function share(wave: number, from: number, step: number, max: number): number {
@@ -35,6 +38,8 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
     hpMultiplier: Math.pow(1 + w.hpGrowthPerWave, wave - 1),
     spawnSeconds: Math.min(w.spawnMaxSeconds, w.spawnBaseSeconds + w.spawnSecondsPerWave * (wave - 1)),
     lopsidedShare: wave >= w.lopsidedFrom ? w.lopsidedShare : 0,
+    packShare: wave >= w.packFrom ? Math.min(w.packShareMax, w.packShareBase + w.packSharePerWave * (wave - w.packFrom)) : 0,
+    packSize: Math.min(w.packSizeMax, Math.round(w.packSizeBase + w.packSizePerWave * Math.max(0, wave - w.packFrom))),
   };
 }
 

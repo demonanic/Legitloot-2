@@ -25,7 +25,8 @@ export interface Turret {
   targetId: number | null;
 }
 
-export type StructureKind = "machine-gun" | "barricade";
+export type StructureKind = "machine-gun" | "mortar" | "barricade";
+export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "mortar"];
 
 /** Anything built on a construction tile. */
 export interface Structure {
@@ -44,8 +45,28 @@ export interface Structure {
   spent: number;
   /** Barricade reinforcement level. */
   reinforce: number;
-  /** Turret state; null for barricades. */
+  /** Turret state (machine gun and mortar); null for barricades. */
   turret: Turret | null;
+}
+
+/** A mortar shell in flight. It lands at (tx, ty) when `left` reaches 0. */
+export interface Shell {
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  total: number;
+  left: number;
+  damage: number;
+  radius: number;
+}
+
+/** A brief explosion marker, for drawing only. */
+export interface Blast {
+  x: number;
+  y: number;
+  r: number;
+  life: number;
 }
 
 export interface Enemy {
@@ -98,6 +119,10 @@ export interface GameState {
   layoutVersion: number;
   enemies: Enemy[];
   projectiles: Projectile[];
+  shells: Shell[];
+  blasts: Blast[];
+  /** Where the player told the mortars to fire this assault; null = automatic. */
+  mortarAim: { x: number; y: number } | null;
   spawns: Spawn[];
   nextSpawn: number;
   nextEnemyId: number;
@@ -152,6 +177,9 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     layoutVersion: 0,
     enemies: [],
     projectiles: [],
+    shells: [],
+    blasts: [],
+    mortarAim: null,
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,
@@ -184,8 +212,28 @@ function rollWave(s: GameState, cfg: GameConfig): void {
   // A lopsided wave favours one side, chosen by the seed.
   const main = plan.lopsidedShare > 0 ? edges[Math.floor(nextRandom(s) * edges.length)] : undefined;
   const n = plan.count;
-  const gap = n > 1 ? plan.spawnSeconds / n : 0;
-  for (let i = 0; i < n; i++) {
+  // Packs: tight clumps from one spot at one moment, at random times in the window.
+  const packs = plan.packShare > 0 && plan.packSize > 1 ? Math.floor((n * plan.packShare) / plan.packSize) : 0;
+  for (let g = 0; g < packs; g++) {
+    const edge = main ?? edges[Math.floor(nextRandom(s) * edges.length)] ?? "north";
+    const at = nextRandom(s) * plan.spawnSeconds;
+    for (let k = 0; k < plan.packSize; k++) {
+      const type = pickType(s, plan.mix);
+      const p = edgePoint(s, cfg, edge, cfg.enemies[type].radius);
+      const hp = Math.round(cfg.enemies[type].maxHp * plan.hpMultiplier);
+      if (k > 0) {
+        // Keep the pack together: members land near the leader.
+        const lead = s.spawns[s.spawns.length - k]!;
+        const spread = (nextRandom(s) - 0.5) * 90;
+        if (edge === "north" || edge === "south") p.x = Math.min(cfg.world.width - 20, Math.max(20, lead.x + spread));
+        else p.y = Math.min(cfg.world.height - 20, Math.max(20, lead.y + spread));
+      }
+      s.spawns.push({ at: at + k * 0.15, type, hp, x: p.x, y: p.y });
+    }
+  }
+  const rest = n - packs * plan.packSize;
+  const gap = rest > 1 ? plan.spawnSeconds / rest : 0;
+  for (let i = 0; i < rest; i++) {
     const type = pickType(s, plan.mix);
     const roll = nextRandom(s);
     const edge = main && roll < plan.lopsidedShare ? main : edges[Math.floor(nextRandom(s) * edges.length)] ?? "north";
@@ -212,7 +260,7 @@ export function structureAt(s: GameState, col: number, row: number): Structure |
 }
 
 export function buildCost(cfg: GameConfig, kind: StructureKind): number {
-  return kind === "barricade" ? cfg.barricade.cost : cfg.turret.cost;
+  return kind === "barricade" ? cfg.barricade.cost : kind === "mortar" ? cfg.mortar.cost : cfg.turret.cost;
 }
 
 /**
@@ -241,7 +289,7 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
   const cost = buildCost(cfg, kind);
   s.currency -= cost;
   const c = tileCenter(cfg, col, row);
-  const maxHp = kind === "barricade" ? cfg.barricade.maxHp : cfg.turret.maxHp;
+  const maxHp = kind === "barricade" ? cfg.barricade.maxHp : kind === "mortar" ? cfg.mortar.maxHp : cfg.turret.maxHp;
   const structure: Structure = {
     id: s.nextStructureId++,
     kind,
@@ -254,7 +302,7 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
     destroyed: false,
     spent: cost,
     reinforce: 0,
-    turret: kind === "machine-gun" ? { cooldown: 0, speed: 0, strength: 0, aim: -Math.PI / 2, targetId: null } : null,
+    turret: kind !== "barricade" ? { cooldown: 0, speed: 0, strength: 0, aim: -Math.PI / 2, targetId: null } : null,
   };
   s.structures.push(structure);
   s.layoutVersion++;
@@ -264,6 +312,11 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
 /** Build a machine-gun turret. */
 export function buildTurret(s: GameState, cfg: GameConfig, col: number, row: number): BuildResult {
   return buildStructure(s, cfg, "machine-gun", col, row);
+}
+
+/** Build a mortar. */
+export function buildMortar(s: GameState, cfg: GameConfig, col: number, row: number): BuildResult {
+  return buildStructure(s, cfg, "mortar", col, row);
 }
 
 /** Build a barricade. */
@@ -292,7 +345,10 @@ export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePat
   if (!st.turret) return null;
   const costs = cfg.upgrades[path].costs;
   const level = st.turret[path];
-  return level < costs.length ? costs[level]! : null;
+  if (level >= costs.length) return null;
+  const base = costs[level]!;
+  // Mortar upgrades cost more, rounded to a multiple of 5.
+  return st.kind === "mortar" ? Math.round((base * cfg.mortar.upgradeCostMultiplier) / 5) * 5 : base;
 }
 
 /** Why an upgrade can't happen right now, or null if it can. Pure. */
@@ -442,12 +498,66 @@ export function damageStructure(s: GameState, st: Structure, amount: number): bo
   return false;
 }
 
-/** Effective shots per second and damage per shot for a turret, after upgrades. */
-export function turretStats(cfg: GameConfig, t: Turret): { fireRate: number; damage: number } {
+/** Effective shots per second and damage per shot for a turret or mortar, after upgrades. */
+export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "machine-gun"): { fireRate: number; damage: number } {
+  const base = kind === "mortar" ? cfg.mortar : cfg.turret;
   return {
-    fireRate: cfg.turret.fireRate * (1 + cfg.upgrades.speed.perLevel * t.speed),
-    damage: cfg.turret.damage * (1 + cfg.upgrades.strength.perLevel * t.strength),
+    fireRate: base.fireRate * (1 + cfg.upgrades.speed.perLevel * t.speed),
+    damage: base.damage * (1 + cfg.upgrades.strength.perLevel * t.strength),
   };
+}
+
+export type AimRejection = "not-in-assault" | "no-mortars";
+
+/**
+ * Point the mortars at a spot on the map for the rest of this assault, or
+ * pass null to return them to automatic targeting. Only during an assault,
+ * and only if at least one working mortar exists. Mortars that can't reach
+ * the spot (too close or too far) keep choosing their own targets.
+ */
+export function aimMortars(s: GameState, cfg: GameConfig, point: { x: number; y: number } | null): { ok: true } | { ok: false; reason: AimRejection } {
+  if (s.phase !== "wave") return { ok: false, reason: "not-in-assault" };
+  if (!s.structures.some((st) => st.kind === "mortar" && !st.destroyed)) return { ok: false, reason: "no-mortars" };
+  s.mortarAim = point
+    ? { x: Math.min(cfg.world.width, Math.max(0, point.x)), y: Math.min(cfg.world.height, Math.max(0, point.y)) }
+    : null;
+  return { ok: true };
+}
+
+/**
+ * Where a mortar fires next: the player's aim point if it is within reach,
+ * otherwise the zombie in reach with the most others inside a blast radius
+ * (ties: closest to the stronghold, then lowest id). Null if nothing is in
+ * reach.
+ */
+export function mortarTarget(s: GameState, cfg: GameConfig, st: Structure): { x: number; y: number } | null {
+  const m = cfg.mortar;
+  const inReach = (x: number, y: number) => {
+    const d = Math.hypot(x - st.x, y - st.y);
+    return d >= m.minRange && d <= m.range;
+  };
+  if (s.mortarAim && inReach(s.mortarAim.x, s.mortarAim.y)) return s.mortarAim;
+  let best: Enemy | null = null;
+  let bestCount = 0;
+  let bestD = Infinity;
+  const r2 = m.blastRadius * m.blastRadius;
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || !inReach(e.x, e.y)) continue;
+    let count = 0;
+    for (const o of s.enemies) {
+      if (o.hp <= 0) continue;
+      const dx = o.x - e.x;
+      const dy = o.y - e.y;
+      if (dx * dx + dy * dy <= r2) count++;
+    }
+    const d = Math.hypot(e.x - s.stronghold.x, e.y - s.stronghold.y);
+    if (count > bestCount || (count === bestCount && (d < bestD || (d === bestD && best && e.id < best.id)))) {
+      best = e;
+      bestCount = count;
+      bestD = d;
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null;
 }
 
 /**
@@ -528,6 +638,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   s.time += dt;
   if (s.phase === "lost") {
     stepProjectiles(s, cfg, dt);
+    stepBlasts(s, dt);
     return;
   }
 
@@ -566,6 +677,8 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   stepEnemies(s, cfg, dt);
   stepTurrets(s, cfg, dt);
   stepProjectiles(s, cfg, dt);
+  stepShells(s, cfg, dt);
+  stepBlasts(s, dt);
 
   // Remove the dead.
   if (s.enemies.some((e) => e.hp <= 0)) s.enemies = s.enemies.filter((e) => e.hp > 0);
@@ -575,6 +688,8 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.phase = "lost";
   } else if (s.phase === "wave" && s.nextSpawn >= s.spawns.length && s.enemies.length === 0) {
     // Wave cleared: back to preparation for the next one.
+    s.mortarAim = null;
+    s.shells = [];
     s.wavesCleared++;
     s.wave++;
     rollWave(s, cfg);
@@ -672,6 +787,10 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
   for (const slot of s.structures) {
     const tur = slot.turret;
     if (!tur || slot.destroyed) continue;
+    if (slot.kind === "mortar") {
+      stepMortar(s, cfg, slot, tur, dt);
+      continue;
+    }
     const stats = turretStats(cfg, tur);
     const interval = 1 / stats.fireRate;
     tur.cooldown -= dt;
@@ -698,6 +817,53 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       s.shotsFired++;
     }
   }
+}
+
+function stepMortar(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const m = cfg.mortar;
+  const stats = turretStats(cfg, tur, "mortar");
+  tur.cooldown -= dt;
+  const target = mortarTarget(s, cfg, slot);
+  tur.targetId = null;
+  if (!target) {
+    if (tur.cooldown < 0) tur.cooldown = 0;
+    return;
+  }
+  tur.aim = Math.atan2(target.y - slot.y, target.x - slot.x);
+  if (tur.cooldown > 0) return;
+  tur.cooldown += 1 / stats.fireRate;
+  if (tur.cooldown < 0) tur.cooldown = 0;
+  const flight = m.shellBaseSeconds + Math.hypot(target.x - slot.x, target.y - slot.y) / m.shellSpeed;
+  s.shells.push({ sx: slot.x, sy: slot.y, tx: target.x, ty: target.y, total: flight, left: flight, damage: stats.damage, radius: m.blastRadius });
+  s.shotsFired++;
+}
+
+/** Move shells along; a landed shell hits every living zombie in its blast once. */
+function stepShells(s: GameState, cfg: GameConfig, dt: number): void {
+  if (s.shells.length === 0) return;
+  const kept: Shell[] = [];
+  for (const sh of s.shells) {
+    sh.left -= dt;
+    if (sh.left > 0) {
+      kept.push(sh);
+      continue;
+    }
+    const r2 = sh.radius * sh.radius;
+    for (const e of s.enemies) {
+      if (e.hp <= 0) continue;
+      const dx = e.x - sh.tx;
+      const dy = e.y - sh.ty;
+      if (dx * dx + dy * dy <= r2) damageEnemy(s, cfg, e, sh.damage);
+    }
+    s.blasts.push({ x: sh.tx, y: sh.ty, r: sh.radius, life: 0.35 });
+  }
+  s.shells = kept;
+}
+
+function stepBlasts(s: GameState, dt: number): void {
+  if (s.blasts.length === 0) return;
+  for (const b of s.blasts) b.life -= dt;
+  s.blasts = s.blasts.filter((b) => b.life > 0);
 }
 
 function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {

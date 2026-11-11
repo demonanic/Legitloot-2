@@ -52,6 +52,17 @@ export interface WaveRules {
   /** From this wave, waves lean towards one side: this share of spawns comes from it. */
   lopsidedFrom: number;
   lopsidedShare: number;
+  /**
+   * Packs: from `packFrom`, part of each wave arrives in tight clumps of
+   * `packSize` from one spot at once. Share and size grow per wave.
+   */
+  packFrom: number;
+  packShareBase: number;
+  packSharePerWave: number;
+  packShareMax: number;
+  packSizeBase: number;
+  packSizePerWave: number;
+  packSizeMax: number;
 }
 
 export interface GameConfig {
@@ -81,6 +92,28 @@ export interface GameConfig {
     projectileSpeed: number;
     radius: number;
     maxHp: number;
+  };
+  /**
+   * Mortar: lobs shells that land after a delay and damage every zombie in the
+   * blast. Can't hit anything closer than `minRange`. Fires at the densest
+   * cluster on its own; during an assault the player may tap the map to aim it.
+   */
+  mortar: {
+    cost: number;
+    range: number;
+    minRange: number;
+    /** Shells per second at level 0. */
+    fireRate: number;
+    /** Blast damage at level 0. */
+    damage: number;
+    blastRadius: number;
+    /** Flight time = shellBaseSeconds + distance / shellSpeed. */
+    shellBaseSeconds: number;
+    shellSpeed: number;
+    radius: number;
+    maxHp: number;
+    /** Upgrade prices are the turret prices times this. */
+    upgradeCostMultiplier: number;
   };
   /** Barricades block movement; reinforcing raises their maximum health. */
   barricade: { cost: number; maxHp: number; reinforce: UpgradePath };
@@ -130,7 +163,20 @@ export const baseConfig: GameConfig = {
     ],
   },
   economy: { startCurrency: 100 },
-  turret: { cost: 50, range: 300, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22, maxHp: 120 },
+  turret: { cost: 50, range: 200, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22, maxHp: 120 },
+  mortar: {
+    cost: 80,
+    range: 440,
+    minRange: 130,
+    fireRate: 0.5,
+    damage: 30,
+    blastRadius: 75,
+    shellBaseSeconds: 0.5,
+    shellSpeed: 700,
+    radius: 24,
+    maxHp: 100,
+    upgradeCostMultiplier: 1.5,
+  },
   barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
   repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25 },
   recycle: { intactShare: 0.5, rubbleShare: 0.25 },
@@ -142,15 +188,15 @@ export const baseConfig: GameConfig = {
     strength: { costs: [30, 50, 80], perLevel: 0.5 },
   },
   enemies: {
-    walker: { maxHp: 26, speed: 30, radius: 14, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
-    runner: { maxHp: 14, speed: 64, radius: 11, structureDamage: 5, attackCooldown: 0.6, drop: { chance: 0.5, min: 2, max: 4 } },
-    brute: { maxHp: 150, speed: 17, radius: 22, structureDamage: 30, attackCooldown: 1.4, drop: { chance: 1, min: 12, max: 20 } },
+    walker: { maxHp: 26, speed: 39, radius: 14, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
+    runner: { maxHp: 14, speed: 83, radius: 11, structureDamage: 5, attackCooldown: 0.6, drop: { chance: 0.5, min: 2, max: 4 } },
+    brute: { maxHp: 150, speed: 22, radius: 22, structureDamage: 30, attackCooldown: 1.4, drop: { chance: 1, min: 12, max: 20 } },
   },
   wave: { prepSeconds: 20, warningSeconds: 3, edges: ["north", "south", "east", "west"] },
   waves: {
     baseCount: 40,
     countPerWave: 6,
-    hpGrowthPerWave: 0.28, // tuned with scripts/balance.mjs: sensible player falls around waves 11-13
+    hpGrowthPerWave: 0.27, // tuned with scripts/balance.mjs: sensible player falls around waves 11-15 and takes hits from wave 1
     runnerFrom: 2,
     runnerShareStep: 0.05,
     runnerShareMax: 0.3,
@@ -162,6 +208,13 @@ export const baseConfig: GameConfig = {
     spawnMaxSeconds: 60,
     lopsidedFrom: 3,
     lopsidedShare: 0.55,
+    packFrom: 2,
+    packShareBase: 0.3,
+    packSharePerWave: 0.03,
+    packShareMax: 0.6,
+    packSizeBase: 8,
+    packSizePerWave: 0.5,
+    packSizeMax: 16,
   },
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
@@ -194,6 +247,7 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
       spawnBaseSeconds: 0.1,
       spawnSecondsPerWave: 0,
       lopsidedFrom: 1e9,
+      packFrom: 1e9,
     },
   };
 }

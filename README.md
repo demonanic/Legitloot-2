@@ -31,6 +31,12 @@ The smallest playable proof, fully offline:
 - **Destroyed structures become rubble**: they keep the tile and stop working. **Rebuild** (60% of what you spent, upgrades kept) or **Recycle** (+25%). Recycling an intact structure returns 50%.
 - **Repairs** between waves for structures and the stronghold, partial if supplies run short.
 
+### Mortar update
+
+- **Mortar** (80): long range (440), but can't hit anything closer than 130. Shells take about a second to land and hit every zombie in the blast. Same Speed and Damage upgrades as the turret, at 1.5× the price; health, rubble, rebuild and recycle work the same way.
+- **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
+- **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
+
 Not in this milestone: free placement (Zone B), other turrets, barricades, other enemies, the adaptive scheduler, permanent progression, saves, sign-in, the portal, expeditions, monetization and sound.
 
 ### URL options

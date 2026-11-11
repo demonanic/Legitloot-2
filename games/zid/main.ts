@@ -14,6 +14,7 @@ import { baseConfig, stressConfig } from "./config.js";
 import { tileAt, tileStatus } from "./grid.js";
 import type { PanelAction } from "./panel.js";
 import {
+  aimMortars,
   buildStructure,
   createState,
   recycleStructure,
@@ -76,8 +77,10 @@ function runPanelAction(action: PanelAction): void {
       view.selected = null;
       return;
     case "build-turret":
+    case "build-mortar":
     case "build-barricade": {
-      const res = buildStructure(state, cfg, action.kind === "build-turret" ? "machine-gun" : "barricade", sel.col, sel.row);
+      const kind = action.kind === "build-turret" ? "machine-gun" : action.kind === "build-mortar" ? "mortar" : "barricade";
+      const res = buildStructure(state, cfg, kind, sel.col, sel.row);
       if (res.ok) view.selected = null;
       else toast(BUILD_MESSAGES[res.reason]);
       return;
@@ -127,6 +130,24 @@ bindTaps(canvas, renderer.toWorld, (p) => {
     const tile = tileAt(cfg, wp.x, wp.y);
     const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
     if (state.phase === "wave") {
+      // With mortars on the field, a tap aims them; tapping the marker again
+      // hands them back to automatic targeting.
+      if (state.structures.some((st) => st.kind === "mortar" && !st.destroyed)) {
+        const aim = state.mortarAim;
+        if (aim && Math.hypot(wp.x - aim.x, wp.y - aim.y) <= 60) {
+          aimMortars(state, cfg, null);
+          toast("Mortars on automatic");
+        } else {
+          aimMortars(state, cfg, wp);
+          const reach = state.structures.some((st) => {
+            if (st.kind !== "mortar" || st.destroyed) return false;
+            const d = Math.hypot(wp.x - st.x, wp.y - st.y);
+            return d >= cfg.mortar.minRange && d <= cfg.mortar.range;
+          });
+          if (!reach) toast("No mortar can reach there");
+        }
+        return;
+      }
       if (tile && structureAt(state, tile.col, tile.row)) toast(MANAGE_MESSAGES["assault-active"]);
       else if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
       return;

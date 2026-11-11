@@ -19,6 +19,10 @@ import {
   structureAt,
   turretStats,
   turretRange,
+  isTrap,
+  isUnlocked,
+  trapDamageMultiplier,
+  KIND_NAMES,
   buildLimit,
   countKind,
   checkBaseUpgrade,
@@ -29,12 +33,14 @@ import {
   type Structure,
 } from "./sim.js";
 
+/** The build menu has two pages: weapons, and traps & walls. */
+export type BuildPage = "weapons" | "traps";
+
 export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "a2" | "close";
 
 export type PanelAction =
-  | { kind: "build-turret" }
-  | { kind: "build-mortar" }
-  | { kind: "build-barricade" }
+  | { kind: "build"; structure: StructureKind }
+  | { kind: "page"; page: BuildPage }
   | { kind: "upgrade"; path: UpgradePathId }
   | { kind: "upgrade-base" }
   | { kind: "reinforce" }
@@ -75,7 +81,7 @@ function recycleButton(cfg: GameConfig, s: GameState, st: Structure, slot: Panel
   return { slot, label: `Recycle · +${recycleValue(cfg, st)}`, enabled: !busy, action: { kind: "recycle" }, confirm: true };
 }
 
-export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel {
+export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: BuildPage = "weapons"): PanelModel {
   const close: PanelButton = { slot: "close", label: "Close", enabled: true, action: { kind: "close" } };
   const st = structureAt(s, sel.col, sel.row);
 
@@ -106,30 +112,67 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile): PanelModel
   }
 
   if (!st) {
-    const turretWhy = checkBuild(s, cfg, sel.col, sel.row, "machine-gun");
-    const mortarWhy = checkBuild(s, cfg, sel.col, sel.row, "mortar");
     const barrWhy = checkBuild(s, cfg, sel.col, sel.row, "barricade");
     // Tile problems show for every kind; the barricade check has no build cap.
     const blocked = barrWhy && barrWhy !== "insufficient-funds" ? barrWhy : null;
-    const capped = (kind: StructureKind, name: string): string => {
-      const limit = buildLimit(s, cfg, kind)!;
+    const buildButton = (slot: PanelSlot, kind: StructureKind, name: string): PanelButton => {
+      const why = checkBuild(s, cfg, sel.col, sel.row, kind);
+      const action: PanelAction = { kind: "build", structure: kind };
+      if (!isUnlocked(s, cfg, kind)) return { slot, label: `${name} · wave ${cfg.unlocks[kind]}`, enabled: false, action };
+      const limit = buildLimit(s, cfg, kind);
+      if (limit === null) return { slot, label: `${name} · ${buildCost(cfg, kind)}`, enabled: !why, action };
       const n = countKind(s, kind);
-      return n >= limit ? `${name} ${n}/${limit} · full` : `${name} ${n}/${limit} · ${buildCost(cfg, kind)}`;
+      const label = n >= limit ? `${name} ${n}/${limit} · full` : `${name} ${n}/${limit} · ${buildCost(cfg, kind)}`;
+      return { slot, label, enabled: !why, action };
     };
+    const buttons: PanelButton[] =
+      page === "weapons"
+        ? [
+            buildButton("a0", "machine-gun", "Turret"),
+            buildButton("b0", "gatling", "Gatling"),
+            buildButton("a1", "rocket", "Rockets"),
+            buildButton("b1", "mortar", "Mortar"),
+            { slot: "a2", label: "Traps & walls ›", enabled: true, action: { kind: "page", page: "traps" } },
+            close,
+          ]
+        : [
+            buildButton("a0", "mine", "Mine"),
+            buildButton("b0", "tripwire", "Trip wire"),
+            buildButton("a1", "barricade", "Barricade"),
+            { slot: "a2", label: "‹ Weapons", enabled: true, action: { kind: "page", page: "weapons" } },
+            close,
+          ];
     return {
-      title: blocked ? "Can't build here" : "Build here",
+      title: blocked ? "Can't build here" : page === "weapons" ? "Build a weapon" : "Build a trap or wall",
       note: blocked,
-      buttons: [
-        { slot: "a0", label: capped("machine-gun", "Turret"), enabled: !turretWhy, action: { kind: "build-turret" } },
-        { slot: "b0", label: capped("mortar", "Mortar"), enabled: !mortarWhy, action: { kind: "build-mortar" } },
-        { slot: "a1", label: `Barricade · ${buildCost(cfg, "barricade")}`, enabled: !barrWhy, action: { kind: "build-barricade" } },
-        close,
-      ],
+      buttons,
       target: { kind: "tile" },
     };
   }
 
-  const name = st.kind === "barricade" ? "Barricade" : st.kind === "mortar" ? "Mortar" : "Machine gun";
+  const name = KIND_NAMES[st.kind];
+  if (st.destroyed && isTrap(st.kind)) {
+    return {
+      title: `${name} · spent`,
+      note: null,
+      buttons: [repairButton(s, cfg, "a0", st, "Re-arm"), recycleButton(cfg, s, st), close],
+      target: { kind: "structure", structure: st },
+    };
+  }
+  if (isTrap(st.kind)) {
+    const mult = trapDamageMultiplier(s, cfg);
+    const info =
+      st.kind === "mine"
+        ? `Goes off when a zombie comes close · ${Math.round(cfg.mine.damage * mult)} damage (grows with base level)`
+        : `First zombie across sets off ${cfg.tripwire.blasts} blasts · ${Math.round(cfg.tripwire.damage * mult)} each (grows with base level)`;
+    return {
+      title: `${name} · armed`,
+      note: null,
+      info,
+      buttons: [recycleButton(cfg, s, st), close],
+      target: { kind: "structure", structure: st },
+    };
+  }
   if (st.destroyed) {
     return {
       title: `${name} · destroyed (rubble)`,

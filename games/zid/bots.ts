@@ -24,6 +24,8 @@ import {
   UPGRADE_PATHS,
   buildLimit,
   countKind,
+  isUnlocked,
+  isTrap,
   upgradeBase,
 } from "./sim.js";
 
@@ -40,28 +42,42 @@ function tilesByDistance(cfg: GameConfig): Tile[] {
     .map((x) => x.t);
 }
 
-function buildNearest(s: GameState, cfg: GameConfig, kind: StructureKind = "machine-gun"): boolean {
+function buildNearest(s: GameState, cfg: GameConfig, kind: StructureKind = "machine-gun", skip = 0): boolean {
   if (s.currency < buildCost(cfg, kind)) return false;
-  const t = tilesByDistance(cfg).find((t) => !structureAt(s, t.col, t.row));
+  // Traps go a ring further out (`skip` tiles), leaving the inner tiles for guns.
+  const t = tilesByDistance(cfg).slice(skip).find((t) => !structureAt(s, t.col, t.row));
   return !!t && buildStructure(s, cfg, kind, t.col, t.row).ok;
 }
 
-/** Every third weapon from wave 3 on is a mortar. */
-function nextWeapon(s: GameState): StructureKind {
-  const weapons = s.structures.filter((st) => st.turret).length;
-  return s.wave >= 3 && weapons % 3 === 2 ? "mortar" : "machine-gun";
-}
+const WEAPON_PREFERENCE: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar"];
 
 /**
- * Build the preferred weapon, or the other one if the preferred kind is at
- * its cap; if both are capped, upgrade the base instead.
+ * Build the unlocked weapon kind with the most room left under its cap
+ * (mortars from wave 3); if every kind is full, upgrade the base instead.
  */
 function buildWeapon(s: GameState, cfg: GameConfig): boolean {
-  const first = nextWeapon(s);
-  for (const kind of [first, first === "mortar" ? "machine-gun" : "mortar"] as const) {
-    if (countKind(s, kind) < buildLimit(s, cfg, kind)!) return buildNearest(s, cfg, kind);
+  let best: StructureKind | null = null;
+  let bestRoom = 0;
+  for (const kind of WEAPON_PREFERENCE) {
+    if (!isUnlocked(s, cfg, kind) || (kind === "mortar" && s.wave < 3)) continue;
+    const room = (buildLimit(s, cfg, kind)! - countKind(s, kind)) / buildLimit(s, cfg, kind)!;
+    if (room > bestRoom) {
+      best = kind;
+      bestRoom = room;
+    }
   }
+  if (best) return buildNearest(s, cfg, best);
   return upgradeBase(s, cfg).ok;
+}
+
+/** From wave 2, keep a few traps out: mines, plus trip wires once unlocked. */
+function placeTraps(s: GameState, cfg: GameConfig): void {
+  if (s.wave < 2) return;
+  const want = Math.min(buildLimit(s, cfg, "mine")!, 1 + Math.floor(s.wave / 2));
+  for (let guard = 0; guard < 20 && countKind(s, "mine") < want; guard++) {
+    const kind: StructureKind = isUnlocked(s, cfg, "tripwire") && countKind(s, "tripwire") * 2 < countKind(s, "mine") ? "tripwire" : "mine";
+    if (!buildNearest(s, cfg, kind, 0)) break;
+  }
 }
 
 /** Repairs first, then builds turrets near the stronghold, then buys the cheapest available upgrade. */
@@ -70,7 +86,8 @@ export const sensiblePlayer: Player = (s, cfg) => {
   if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
   for (let guard = 0; guard < 200; guard++) {
     const want = 2 + Math.floor((s.wave - 1) / 2);
-    if (s.structures.length < want && buildWeapon(s, cfg)) continue;
+    const weapons = s.structures.filter((st) => st.turret).length;
+    if (weapons < want && buildWeapon(s, cfg)) continue;
     let best: { id: number; path: UpgradePathId; cost: number } | null = null;
     for (const st of s.structures) {
       for (const path of UPGRADE_PATHS) {
@@ -83,6 +100,18 @@ export const sensiblePlayer: Player = (s, cfg) => {
     if (buildWeapon(s, cfg)) continue;
     break;
   }
+};
+
+/** The sensible player, plus traps laid close in. Experimental: where it lays traps is naive, so it is not used for balance. */
+export const trapperPlayer: Player = (s, cfg) => {
+  // Set aside about a quarter of the Supplies for re-arming and laying traps.
+  const budget = Math.floor(s.currency * 0.25);
+  const keep = s.currency - budget;
+  s.currency = budget;
+  for (const st of s.structures) if (st.destroyed && isTrap(st.kind)) repair(s, cfg, { kind: "structure", id: st.id });
+  placeTraps(s, cfg);
+  s.currency += keep;
+  sensiblePlayer(s, cfg);
 };
 
 /** Only ever builds turrets (upgrading the base when full); never upgrades turrets. */

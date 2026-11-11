@@ -11,7 +11,7 @@ import { bindTaps, routeTap } from "../../engine/input/input.js";
 import { bindVisibility, createLoop } from "../../engine/loop/loop.js";
 import { createRenderer } from "../../engine/render/render.js";
 import { baseConfig, stressConfig } from "./config.js";
-import { tileAt, tileStatus } from "./grid.js";
+import { forgivingTile, overlapsStronghold, tileStatus } from "./grid.js";
 import type { PanelAction } from "./panel.js";
 import {
   aimMortars,
@@ -46,7 +46,8 @@ const renderer = createRenderer(canvas, {
 });
 
 let state: GameState = newRun();
-const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0 };
+// The build menu remembers its last page, so placing several traps in a row is quick.
+const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons" };
 let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
@@ -77,11 +78,11 @@ function runPanelAction(action: PanelAction): void {
     case "close":
       view.selected = null;
       return;
-    case "build-turret":
-    case "build-mortar":
-    case "build-barricade": {
-      const kind = action.kind === "build-turret" ? "machine-gun" : action.kind === "build-mortar" ? "mortar" : "barricade";
-      const res = buildStructure(state, cfg, kind, sel.col, sel.row);
+    case "page":
+      view.buildPage = action.page;
+      return;
+    case "build": {
+      const res = buildStructure(state, cfg, action.structure, sel.col, sel.row);
       if (res.ok) view.selected = null;
       else toast(BUILD_MESSAGES[res.reason]);
       return;
@@ -131,7 +132,8 @@ const regions = uiRegions(cfg, () => state, () => view, {
 bindTaps(canvas, renderer.toWorld, (p) => {
   routeTap(p, regions, (wp) => {
     // World tap: choose a tile. Building happens only after "Build" is pressed.
-    const tile = tileAt(cfg, wp.x, wp.y);
+    // Forgiving: a tap just outside a usable tile still picks it.
+    const tile = forgivingTile(cfg, wp.x, wp.y, (c, r) => !!structureAt(state, c, r) || overlapsStronghold(cfg, c, r));
     const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
     if (state.phase === "wave") {
       // With mortars on the field, each tap aims one mortar (split fire);

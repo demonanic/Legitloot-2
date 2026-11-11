@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { baseConfig, type EnemyType } from "../games/zid/config.js";
-import { overlapsStronghold } from "../games/zid/grid.js";
+import { gridSize, overlapsStronghold } from "../games/zid/grid.js";
 import { nextTile, pathField } from "../games/zid/path.js";
 import {
   buildBarricade,
@@ -51,8 +51,9 @@ function run(s: GameState, seconds: number): void {
 /** Every tile touching the stronghold's tiles (8-way), i.e. a full ring. */
 function ring(): [number, number][] {
   const out: [number, number][] = [];
-  for (let r = 0; r < 16; r++) {
-    for (let c = 0; c < 9; c++) {
+  const { rows, cols } = gridSize(cfg);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
       if (overlapsStronghold(cfg, c, r)) continue;
       let touches = false;
       for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) if (overlapsStronghold(cfg, c + dc, r + dr)) touches = true;
@@ -185,7 +186,7 @@ test("barricades: placed on buildable tiles only, cost deducted, occupied and as
   assert.deepEqual(buildBarricade(s, cfg, 3, 5), { ok: false, reason: "occupied" });
   assert.deepEqual(buildTurret(s, cfg, 3, 5), { ok: false, reason: "occupied" });
   assert.deepEqual(buildBarricade(s, cfg, 0, 0), { ok: false, reason: "outside-perimeter" });
-  assert.deepEqual(buildBarricade(s, cfg, 2, 5), { ok: false, reason: "invalid-terrain" });
+  assert.deepEqual(buildBarricade(s, cfg, 2, 6), { ok: false, reason: "invalid-terrain" });
   const c = s.currency;
   assault(s);
   assert.deepEqual(buildBarricade(s, cfg, 4, 5), { ok: false, reason: "assault-active" });
@@ -245,7 +246,7 @@ test("pathing: building reroutes zombies", () => {
 test("pathing: fully enclosed zombies break through a blocker, then the route recovers", () => {
   const s = prep();
   const walls = ring().map(([c, r]) => built(buildBarricade(s, cfg, c, r)));
-  assert.equal(walls.length, 14);
+  assert.equal(walls.length, 12);
   assault(s);
   addZombie(s, "brute", 360, 40, 1e9);
   run(s, 120);
@@ -263,7 +264,7 @@ test("pathing: recycling a blocker in prep reopens the route", () => {
   assert.ok(field.dist[0]! > cfg.pathing.blockedTileCost, "enclosed: every route costs a breach");
   // A wall on a side, not a corner: corners only touch diagonally, and
   // zombies may not squeeze diagonally between two walls.
-  const side = walls.find((w) => w.col === 4 && w.row === 6)!;
+  const side = walls.find((w) => w.col === 4 && w.row === 7)!;
   recycleStructure(s, cfg, side.id);
   assert.ok(s.layoutVersion > v0);
   assert.ok(pathField(s, cfg).dist[0]! < cfg.pathing.blockedTileCost, "open again");
@@ -312,13 +313,13 @@ test("menus: rubble offers Rebuild and Recycle; the stronghold offers Repair; em
   assert.deepEqual(rubble.buttons.map((b) => b.action.kind), ["repair", "recycle", "close"]);
   assert.ok(rubble.buttons[0]!.label.startsWith("Rebuild"));
   s.stronghold.hp = 200;
-  const sh = panelModel(s, cfg, { col: 4, row: 7 });
+  const sh = panelModel(s, cfg, { col: 4, row: 8 });
   assert.equal(sh.target.kind, "stronghold");
   assert.equal(sh.buttons[0]!.action.kind, "repair");
   assert.ok(sh.buttons[0]!.enabled);
   const empty = panelModel(s, cfg, { col: 4, row: 5 });
-  assert.deepEqual(empty.buttons.map((b) => b.action.kind), ["build-turret", "build-mortar", "build-barricade", "close"]);
-  assert.ok(empty.buttons.every((b) => b.enabled));
+  assert.deepEqual(empty.buttons.map((b) => b.action.kind), ["build", "build", "build", "build", "page", "close"]);
+  assert.ok(empty.buttons[0]!.enabled && empty.buttons[3]!.enabled, "turret and mortar available from the start");
   s.currency = 0;
   const poor = panelModel(s, cfg, { col: 4, row: 5 });
   assert.equal(poor.buttons[0]!.enabled, false, "turret greyed out without supplies");

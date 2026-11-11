@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { baseConfig } from "../games/zid/config.js";
+import { buildableTiles } from "../games/zid/grid.js";
 import { panelModel } from "../games/zid/panel.js";
 import {
   buildBarricade,
@@ -33,11 +34,7 @@ function prep(currency = 10_000): GameState {
 }
 
 /** Buildable tiles, in a fixed order. */
-const TILES: [number, number][] = [
-  [1, 4], [2, 4], [3, 4], [4, 4], [5, 4], [6, 4], [7, 4],
-  [1, 6], [2, 6], [3, 6], [4, 6], [5, 6], [6, 6], [7, 6],
-  [1, 9], [2, 9], [3, 9], [4, 9], [5, 9], [6, 9], [7, 9],
-];
+const TILES: [number, number][] = buildableTiles(cfg).map((t) => [t.col, t.row]);
 
 // --- Range upgrade --------------------------------------------------------------
 
@@ -148,7 +145,7 @@ test("menu: build buttons show how many of each are built against the cap", () =
   buildTurret(s, cfg, 1, 4);
   const menu = panelModel(s, cfg, { col: 2, row: 4 });
   assert.match(menu.buttons[0]!.label, new RegExp(`^Turret 1/${levels[0]!.machineGuns}`));
-  assert.match(menu.buttons[1]!.label, new RegExp(`^Mortar 0/${levels[0]!.mortars}`));
+  assert.match(menu.buttons[3]!.label, new RegExp(`^Mortar 0/${levels[0]!.mortars}`));
 });
 
 test("popups: a paying kill leaves a floating +N that rises and fades", () => {

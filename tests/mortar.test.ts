@@ -202,7 +202,7 @@ test("split fire: each tap claims the closest free mortar in reach; when all are
   const p1 = { x: ma.x + 40, y: 600 }; // closer to A
   const r1 = aimMortars(s, cfg, p1);
   assert.deepEqual(r1, { ok: true, action: "aimed", mortarId: ma.id });
-  const p2 = { x: ma.x + 100, y: 700 }; // still closer to A, but A is taken
+  const p2 = { x: 300, y: 640 }; // still closer to A, but A is taken
   assert.deepEqual(aimMortars(s, cfg, p2), { ok: true, action: "aimed", mortarId: mb.id });
   assert.deepEqual(ma.turret!.aimPoint, p1);
   assert.deepEqual(mb.turret!.aimPoint, p2);
@@ -247,12 +247,17 @@ test("mortar rubble: can be rebuilt with upgrades kept, or recycled for the rubb
   assert.equal(s.currency, before + value);
 });
 
-test("menu: empty tiles offer Turret, Mortar and Barricade; a mortar offers Speed, Damage, Repair, Recycle", () => {
+test("menu: two build pages (weapons; traps & walls); a mortar offers Speed, Damage, Repair, Recycle", () => {
   const s = prep();
-  const empty = panelModel(s, cfg, { col: 2, row: 4 });
+  const weapons = panelModel(s, cfg, { col: 2, row: 4 }, "weapons");
   assert.deepEqual(
-    empty.buttons.map((b) => [b.slot, b.action.kind]),
-    [["a0", "build-turret"], ["b0", "build-mortar"], ["a1", "build-barricade"], ["close", "close"]],
+    weapons.buttons.map((b) => [b.slot, b.action.kind === "build" ? b.action.structure : b.action.kind]),
+    [["a0", "machine-gun"], ["b0", "gatling"], ["a1", "rocket"], ["b1", "mortar"], ["a2", "page"], ["close", "close"]],
+  );
+  const traps = panelModel(s, cfg, { col: 2, row: 4 }, "traps");
+  assert.deepEqual(
+    traps.buttons.map((b) => [b.slot, b.action.kind === "build" ? b.action.structure : b.action.kind]),
+    [["a0", "mine"], ["b0", "tripwire"], ["a1", "barricade"], ["a2", "page"], ["close", "close"]],
   );
   withMortar(s);
   const menu = panelModel(s, cfg, { col: 4, row: 4 });

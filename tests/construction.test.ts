@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { baseConfig } from "../games/zid/config.js";
-import { buildableTiles, gridSize, pointInPolygon, tileAt, tileCenter, tileStatus } from "../games/zid/grid.js";
+import { buildableTiles, forgivingTile, gridSize, pointInPolygon, tileAt, tileCenter, tileOrigin, tileStatus } from "../games/zid/grid.js";
 import { buildTurret, checkBuild, createState, startWaveNow, step, structureAt } from "../games/zid/sim.js";
 
 const cfg = baseConfig;
@@ -19,10 +19,18 @@ function tiles() {
   return { buildable: [b.col, b.row] as [number, number], outside: outside!, rock };
 }
 
-test("grid: tiles are large enough for touch", () => {
-  // 44 CSS px minimum on a 412 px-wide phone showing a 720-unit-wide world.
+test("grid: tiles stay close to touch size, and taps near an edge are forgiven", () => {
+  // 44 CSS px is the guideline on a 412 px-wide phone; tiles are a little
+  // under it, so taps just outside a usable tile still pick it.
   const cssPx = cfg.construction.tileSize * (412 / cfg.world.width);
-  assert.ok(cssPx >= 44, `tile is ${cssPx.toFixed(1)} CSS px`);
+  assert.ok(cssPx >= 38, `tile is ${cssPx.toFixed(1)} CSS px`);
+  const b = buildableTiles(cfg).find((t) => tileStatus(cfg, t.col, t.row - 1) === "outside-perimeter")!;
+  const o = tileOrigin(cfg, b.col, b.row);
+  const nobody = () => false;
+  // 8 units above the tile's top edge, in a tile outside the fence.
+  assert.deepEqual(forgivingTile(cfg, o.x + 30, o.y - 8, nobody), { col: b.col, row: b.row });
+  // Far outside: no rescue.
+  assert.notDeepEqual(forgivingTile(cfg, o.x + 30, o.y - 40, nobody), { col: b.col, row: b.row });
 });
 
 test("grid: the perimeter is a custom shape, not a rectangle", () => {
@@ -117,7 +125,7 @@ test("construction: checkBuild is a pure preview that matches buildTurret", () =
 });
 
 test("construction: many turrets can be placed, limited only by space and supplies (caps lifted)", () => {
-  const cfg = { ...baseConfig, stronghold: { ...baseConfig.stronghold, levels: [{ cost: 0, machineGuns: 999, mortars: 999, maxHp: 400 }] } };
+  const cfg = { ...baseConfig, stronghold: { ...baseConfig.stronghold, levels: [{ cost: 0, machineGuns: 999, mortars: 999, gatlings: 999, rockets: 999, traps: 999, maxHp: 400 }] } };
   const s = createState(cfg, 1);
   s.currency = 1e6;
   let built = 0;

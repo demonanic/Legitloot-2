@@ -52,7 +52,8 @@ function buildField(s: GameState, cfg: GameConfig): PathField {
   const { cols, rows } = gridSize(cfg);
   const n = cols * rows;
   const blocker: (Structure | null)[] = new Array(n).fill(null);
-  for (const st of s.structures) if (!st.destroyed) blocker[st.row * cols + st.col] = st;
+  // Traps never block: zombies walk straight over them.
+  for (const st of s.structures) if (!st.destroyed && st.kind !== "mine" && st.kind !== "tripwire") blocker[st.row * cols + st.col] = st;
   const goal = new Uint8Array(n);
   const dist = new Float64Array(n).fill(Infinity);
   const done = new Uint8Array(n);
@@ -96,9 +97,10 @@ function isBlocked(blocker: (Structure | null)[], cols: number, c: number, r: nu
 /** Tile containing a point, clamped onto the grid (zombies spawn just off it). */
 export function clampTile(cfg: GameConfig, field: PathField, x: number, y: number): { col: number; row: number } {
   const t = cfg.construction.tileSize;
+  const o = cfg.construction.origin;
   return {
-    col: Math.min(field.cols - 1, Math.max(0, Math.floor(x / t))),
-    row: Math.min(field.rows - 1, Math.max(0, Math.floor(y / t))),
+    col: Math.min(field.cols - 1, Math.max(0, Math.floor((x - o.x) / t))),
+    row: Math.min(field.rows - 1, Math.max(0, Math.floor((y - o.y) / t))),
   };
 }
 

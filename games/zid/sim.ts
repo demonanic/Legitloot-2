@@ -6,7 +6,7 @@
  */
 
 import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig } from "./config.js";
-import { tileCenter, tileStatus, type TileStatus } from "./grid.js";
+import { tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
 
@@ -30,10 +30,30 @@ export interface Turret {
   aimPoint: { x: number; y: number } | null;
   /** Game time of the last shot, for recoil, flash and smoke. */
   lastShot: number;
+  /** Gatling only: 0..1 how far spun up, and the barrel angle for drawing. */
+  spin: number;
+  barrel: number;
 }
 
-export type StructureKind = "machine-gun" | "mortar" | "barricade";
-export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "mortar"];
+export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "barricade" | "mine" | "tripwire";
+export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar"];
+export const TRAP_KINDS: readonly StructureKind[] = ["mine", "tripwire"];
+export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "mine", "tripwire", "barricade"];
+
+export function isTrap(kind: StructureKind): boolean {
+  return kind === "mine" || kind === "tripwire";
+}
+
+/** Player-facing names. */
+export const KIND_NAMES: Record<StructureKind, string> = {
+  "machine-gun": "Machine gun",
+  gatling: "Gatling gun",
+  rocket: "Rocket launcher",
+  mortar: "Mortar",
+  barricade: "Barricade",
+  mine: "Proximity mine",
+  tripwire: "Trip wire",
+};
 
 /** Anything built on a construction tile. */
 export interface Structure {
@@ -52,8 +72,29 @@ export interface Structure {
   spent: number;
   /** Barricade reinforcement level. */
   reinforce: number;
-  /** Turret state (machine gun and mortar); null for barricades. */
+  /** Turret state for weapons; null for barricades and traps. */
   turret: Turret | null;
+  /** Trip wires: the wire's angle (radians), across the zombies' approach. */
+  facing: number;
+}
+
+/** A rocket in flight, homing on `targetId`. `trail` is for drawing only. */
+export interface Rocket {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  targetId: number | null;
+  damage: number;
+  splash: number;
+  life: number;
+  trail: [number, number][];
+}
+
+/** A short on-screen notice, e.g. an unlock. For drawing only. */
+export interface Notice {
+  text: string;
+  life: number;
 }
 
 /** A mortar shell in flight. It lands at (tx, ty) when `left` reaches 0. */
@@ -135,7 +176,9 @@ export interface GameState {
   enemies: Enemy[];
   projectiles: Projectile[];
   shells: Shell[];
+  rockets: Rocket[];
   blasts: Blast[];
+  notices: Notice[];
   /** Floating "+N" Supplies from kills, for drawing only. */
   popups: Popup[];
   spawns: Spawn[];
@@ -193,7 +236,9 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     enemies: [],
     projectiles: [],
     shells: [],
+    rockets: [],
     blasts: [],
+    notices: [],
     popups: [],
     spawns: [],
     nextSpawn: 0,
@@ -266,6 +311,7 @@ export type BuildRejection =
   | Exclude<TileStatus, "buildable">
   | "occupied"
   | "limit-reached"
+  | "locked"
   | "insufficient-funds";
 
 export type BuildResult = { ok: true; structure: Structure } | { ok: false; reason: BuildRejection };
@@ -276,7 +322,45 @@ export function structureAt(s: GameState, col: number, row: number): Structure |
 }
 
 export function buildCost(cfg: GameConfig, kind: StructureKind): number {
-  return kind === "barricade" ? cfg.barricade.cost : kind === "mortar" ? cfg.mortar.cost : cfg.turret.cost;
+  switch (kind) {
+    case "barricade":
+      return cfg.barricade.cost;
+    case "mortar":
+      return cfg.mortar.cost;
+    case "gatling":
+      return cfg.gatling.cost;
+    case "rocket":
+      return cfg.rocket.cost;
+    case "mine":
+      return cfg.mine.cost;
+    case "tripwire":
+      return cfg.tripwire.cost;
+    default:
+      return cfg.turret.cost;
+  }
+}
+
+function kindMaxHp(cfg: GameConfig, kind: StructureKind): number {
+  switch (kind) {
+    case "barricade":
+      return cfg.barricade.maxHp;
+    case "mortar":
+      return cfg.mortar.maxHp;
+    case "gatling":
+      return cfg.gatling.maxHp;
+    case "rocket":
+      return cfg.rocket.maxHp;
+    case "mine":
+    case "tripwire":
+      return 1;
+    default:
+      return cfg.turret.maxHp;
+  }
+}
+
+/** Whether this kind can be built yet in the run. */
+export function isUnlocked(s: GameState, cfg: GameConfig, kind: StructureKind): boolean {
+  return s.wave >= cfg.unlocks[kind];
 }
 
 /**
@@ -290,6 +374,7 @@ export function checkBuild(s: GameState, cfg: GameConfig, col: number, row: numb
   const status = tileStatus(cfg, col, row);
   if (status !== "buildable") return status;
   if (structureAt(s, col, row)) return "occupied";
+  if (!isUnlocked(s, cfg, kind)) return "locked";
   const limit = buildLimit(s, cfg, kind);
   if (limit !== null && countKind(s, kind) >= limit) return "limit-reached";
   if (s.currency < buildCost(cfg, kind)) return "insufficient-funds";
@@ -298,12 +383,27 @@ export function checkBuild(s: GameState, cfg: GameConfig, col: number, row: numb
 
 /** How many of this kind the current base level allows; null = no limit. Rubble counts. */
 export function buildLimit(s: GameState, cfg: GameConfig, kind: StructureKind): number | null {
-  if (kind === "barricade") return null;
   const lvl = baseLevel(s, cfg);
-  return kind === "mortar" ? lvl.mortars : lvl.machineGuns;
+  switch (kind) {
+    case "barricade":
+      return null;
+    case "mortar":
+      return lvl.mortars;
+    case "gatling":
+      return lvl.gatlings;
+    case "rocket":
+      return lvl.rockets;
+    case "mine":
+    case "tripwire":
+      return lvl.traps;
+    default:
+      return lvl.machineGuns;
+  }
 }
 
+/** How many count against this kind's limit (mines and trip wires share one). Spent traps and rubble count. */
 export function countKind(s: GameState, kind: StructureKind): number {
+  if (isTrap(kind)) return s.structures.filter((st) => isTrap(st.kind)).length;
   return s.structures.filter((st) => st.kind === kind).length;
 }
 
@@ -353,7 +453,9 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
   const cost = buildCost(cfg, kind);
   s.currency -= cost;
   const c = tileCenter(cfg, col, row);
-  const maxHp = kind === "barricade" ? cfg.barricade.maxHp : kind === "mortar" ? cfg.mortar.maxHp : cfg.turret.maxHp;
+  const maxHp = kindMaxHp(cfg, kind);
+  // Trip wires stretch across the line from the tile to the stronghold.
+  const facing = Math.atan2(s.stronghold.y - c.y, s.stronghold.x - c.x) + Math.PI / 2;
   const structure: Structure = {
     id: s.nextStructureId++,
     kind,
@@ -366,7 +468,10 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
     destroyed: false,
     spent: cost,
     reinforce: 0,
-    turret: kind !== "barricade" ? { cooldown: 0, speed: 0, strength: 0, range: 0, aim: -Math.PI / 2, targetId: null, aimPoint: null, lastShot: -1e9 } : null,
+    turret: TURRET_KINDS.includes(kind)
+      ? { cooldown: 0, speed: 0, strength: 0, range: 0, aim: -Math.PI / 2, targetId: null, aimPoint: null, lastShot: -1e9, spin: 0, barrel: 0 }
+      : null,
+    facing,
   };
   s.structures.push(structure);
   s.layoutVersion++;
@@ -408,13 +513,15 @@ export function structureById(s: GameState, id: number): Structure | null {
 /** Cost of the next level on a path, or null at max level. */
 export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePathId): number | null {
   if (!st.turret) return null;
-  if (path === "range" && st.kind === "mortar") return null;
+  if (path === "range" && st.kind !== "machine-gun") return null;
   const costs = cfg.upgrades[path].costs;
   const level = st.turret[path];
   if (level >= costs.length) return null;
   const base = costs[level]!;
-  // Mortar upgrades cost more, rounded to a multiple of 5.
-  return st.kind === "mortar" ? Math.round((base * cfg.mortar.upgradeCostMultiplier) / 5) * 5 : base;
+  // Heavier weapons' upgrades cost more, rounded to a multiple of 5.
+  const mult =
+    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : 1;
+  return mult === 1 ? base : Math.round((base * mult) / 5) * 5;
 }
 
 /** Why an upgrade can't happen right now, or null if it can. Pure. */
@@ -424,7 +531,7 @@ export function checkUpgrade(s: GameState, cfg: GameConfig, id: number, path: Up
   const st = structureById(s, id);
   if (!st) return "no-such-structure";
   if (!st.turret) return "not-a-turret";
-  if (path === "range" && st.kind === "mortar") return "not-for-mortar";
+  if (path === "range" && st.kind !== "machine-gun") return "not-for-mortar";
   if (st.destroyed) return "destroyed";
   const cost = nextUpgradeCost(cfg, st, path);
   if (cost === null) return "max-level";
@@ -567,10 +674,13 @@ export function damageStructure(s: GameState, st: Structure, amount: number): bo
 
 /** Effective shots per second and damage per shot for a turret or mortar, after upgrades. */
 export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "machine-gun"): { fireRate: number; damage: number } {
-  const base = kind === "mortar" ? cfg.mortar : cfg.turret;
+  const g = cfg.gatling;
+  const rate =
+    kind === "mortar" ? cfg.mortar.fireRate : kind === "rocket" ? cfg.rocket.fireRate : kind === "gatling" ? g.minRate + (g.maxRate - g.minRate) * t.spin : cfg.turret.fireRate;
+  const dmg = kind === "mortar" ? cfg.mortar.damage : kind === "rocket" ? cfg.rocket.damage : kind === "gatling" ? g.damage : cfg.turret.damage;
   return {
-    fireRate: base.fireRate * (1 + cfg.upgrades.speed.perLevel * t.speed),
-    damage: base.damage * (1 + cfg.upgrades.strength.perLevel * t.strength),
+    fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed),
+    damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength),
   };
 }
 
@@ -705,6 +815,8 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
 /** A machine gun's reach after Range upgrades (mortars use their own fixed range). */
 export function turretRange(cfg: GameConfig, st: Structure): number {
   if (st.kind === "mortar") return cfg.mortar.range;
+  if (st.kind === "gatling") return cfg.gatling.range;
+  if (st.kind === "rocket") return cfg.rocket.range;
   return cfg.turret.range * (1 + cfg.upgrades.range.perLevel * (st.turret?.range ?? 0));
 }
 
@@ -783,8 +895,10 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   }
 
   stepEnemies(s, cfg, dt);
+  stepTraps(s, cfg);
   stepTurrets(s, cfg, dt);
   stepProjectiles(s, cfg, dt);
+  stepRockets(s, cfg, dt);
   stepShells(s, cfg, dt);
   stepBlasts(s, dt);
 
@@ -800,6 +914,10 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.shells = [];
     s.wavesCleared++;
     s.wave++;
+    s.rockets = [];
+    for (const k of ALL_KINDS) {
+      if (cfg.unlocks[k] === s.wave && s.wave > 1) s.notices.push({ text: `Unlocked: ${KIND_NAMES[k]}`, life: 5 });
+    }
     rollWave(s, cfg);
     if (cfg.wave.prepSeconds > 0) {
       s.phase = "prep";
@@ -814,8 +932,9 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
 /** Distance from a point to a tile's square edge (0 when touching or inside). */
 function distanceToTile(cfg: GameConfig, col: number, row: number, x: number, y: number): number {
   const t = cfg.construction.tileSize;
-  const dx = Math.max(col * t - x, 0, x - (col + 1) * t);
-  const dy = Math.max(row * t - y, 0, y - (row + 1) * t);
+  const p = tileOrigin(cfg, col, row);
+  const dx = Math.max(p.x - x, 0, x - (p.x + t));
+  const dy = Math.max(p.y - y, 0, y - (p.y + t));
   return Math.hypot(dx, dy);
 }
 
@@ -891,7 +1010,6 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
 }
 
 function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
-  const t = cfg.turret;
   for (const slot of s.structures) {
     const tur = slot.turret;
     if (!tur || slot.destroyed) continue;
@@ -899,11 +1017,22 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       stepMortar(s, cfg, slot, tur, dt);
       continue;
     }
-    const stats = turretStats(cfg, tur);
-    const interval = 1 / stats.fireRate;
+    if (slot.kind === "rocket") {
+      stepRocketLauncher(s, cfg, slot, tur, dt);
+      continue;
+    }
+    const gatling = slot.kind === "gatling";
+    const t = gatling ? cfg.gatling : cfg.turret;
     tur.cooldown -= dt;
     const target = pickTarget(s, cfg, slot, turretRange(cfg, slot));
     tur.targetId = target ? target.id : null;
+    if (gatling) {
+      // Spins up while it has something to shoot, winds down when it doesn't.
+      tur.spin = target ? Math.min(1, tur.spin + dt / cfg.gatling.spinUpSeconds) : Math.max(0, tur.spin - dt / cfg.gatling.spinDownSeconds);
+      tur.barrel = (tur.barrel + dt * (2 + 28 * tur.spin)) % (Math.PI * 2);
+    }
+    const stats = turretStats(cfg, tur, slot.kind);
+    const interval = 1 / stats.fireRate;
     if (!target) {
       if (tur.cooldown < 0) tur.cooldown = 0;
       continue;
@@ -925,6 +1054,164 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       });
       s.shotsFired++;
     }
+  }
+}
+
+function stepRocketLauncher(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const r = cfg.rocket;
+  const stats = turretStats(cfg, tur, "rocket");
+  tur.cooldown -= dt;
+  // Rockets go for the toughest zombie in range (ties: closest to the stronghold, then id).
+  let target: Enemy | null = null;
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || Math.hypot(e.x - slot.x, e.y - slot.y) > r.range) continue;
+    if (!target || e.hp > target.hp || (e.hp === target.hp && e.id < target.id)) target = e;
+  }
+  tur.targetId = target ? target.id : null;
+  if (!target) {
+    if (tur.cooldown < 0) tur.cooldown = 0;
+    return;
+  }
+  tur.aim = Math.atan2(target.y - slot.y, target.x - slot.x);
+  if (tur.cooldown > 0) return;
+  tur.cooldown += 1 / stats.fireRate;
+  if (tur.cooldown < 0) tur.cooldown = 0;
+  tur.lastShot = s.time;
+  const cos = Math.cos(tur.aim);
+  const sin = Math.sin(tur.aim);
+  const splash = r.splashDamage * (1 + cfg.upgrades.strength.perLevel * tur.strength);
+  s.rockets.push({
+    x: slot.x + cos * r.radius,
+    y: slot.y + sin * r.radius,
+    vx: cos * r.speed,
+    vy: sin * r.speed,
+    targetId: target.id,
+    damage: stats.damage,
+    splash,
+    life: r.maxLifetime,
+    trail: [],
+  });
+  s.shotsFired++;
+}
+
+/** Damage every living zombie within `radius` of a point once. Returns how many were hit. */
+function blast(s: GameState, cfg: GameConfig, x: number, y: number, radius: number, damage: number, hitIds?: Set<number>): number {
+  let n = 0;
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || hitIds?.has(e.id)) continue;
+    const dx = e.x - x;
+    const dy = e.y - y;
+    const rr = radius + cfg.enemies[e.type].radius * 0.5;
+    if (dx * dx + dy * dy <= rr * rr) {
+      hitIds?.add(e.id);
+      damageEnemy(s, cfg, e, damage);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Rockets home on their target (or the nearest zombie if it died) and burst on contact. */
+function stepRockets(s: GameState, cfg: GameConfig, dt: number): void {
+  if (s.rockets.length === 0) return;
+  const r = cfg.rocket;
+  const kept: Rocket[] = [];
+  for (const k of s.rockets) {
+    let target = k.targetId !== null ? s.enemies.find((e) => e.id === k.targetId && e.hp > 0) ?? null : null;
+    if (!target) {
+      let bestD = 220;
+      for (const e of s.enemies) {
+        if (e.hp <= 0) continue;
+        const d = Math.hypot(e.x - k.x, e.y - k.y);
+        if (d < bestD) {
+          bestD = d;
+          target = e;
+        }
+      }
+      k.targetId = target ? target.id : null;
+    }
+    if (target) {
+      const want = Math.atan2(target.y - k.y, target.x - k.x);
+      const have = Math.atan2(k.vy, k.vx);
+      let diff = want - have;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const turn = Math.max(-r.turnRate * dt, Math.min(r.turnRate * dt, diff));
+      const a = have + turn;
+      k.vx = Math.cos(a) * r.speed;
+      k.vy = Math.sin(a) * r.speed;
+    }
+    k.trail.push([k.x, k.y]);
+    if (k.trail.length > 10) k.trail.shift();
+    k.x += k.vx * dt;
+    k.y += k.vy * dt;
+    k.life -= dt;
+    let hit: Enemy | null = null;
+    for (const e of s.enemies) {
+      if (e.hp <= 0) continue;
+      const rr = cfg.enemies[e.type].radius + 5;
+      if ((e.x - k.x) ** 2 + (e.y - k.y) ** 2 <= rr * rr) {
+        hit = e;
+        break;
+      }
+    }
+    if (hit || k.life <= 0) {
+      const ids = new Set<number>();
+      if (hit) {
+        ids.add(hit.id);
+        damageEnemy(s, cfg, hit, k.damage);
+      }
+      blast(s, cfg, k.x, k.y, r.splashRadius, k.splash, ids);
+      s.blasts.push({ x: k.x, y: k.y, r: r.splashRadius, life: BLAST_SECONDS });
+      continue;
+    }
+    kept.push(k);
+  }
+  s.rockets = kept;
+}
+
+/** Trap damage multiplier from the base level. */
+export function trapDamageMultiplier(s: GameState, cfg: GameConfig): number {
+  return 1 + cfg.trapDamagePerBaseLevel * s.stronghold.level;
+}
+
+/** Armed traps go off when a zombie reaches them; they never block or get attacked. */
+function stepTraps(s: GameState, cfg: GameConfig): void {
+  const mult = trapDamageMultiplier(s, cfg);
+  for (const st of s.structures) {
+    if (st.destroyed || !isTrap(st.kind)) continue;
+    if (st.kind === "mine") {
+      const m = cfg.mine;
+      const trig = s.enemies.some((e) => e.hp > 0 && Math.hypot(e.x - st.x, e.y - st.y) <= m.triggerRadius + cfg.enemies[e.type].radius);
+      if (!trig) continue;
+      blast(s, cfg, st.x, st.y, m.blastRadius, m.damage * mult);
+      s.blasts.push({ x: st.x, y: st.y, r: m.blastRadius, life: BLAST_SECONDS });
+      st.destroyed = true;
+      continue;
+    }
+    // Trip wire: anyone crossing the wire's segment sets it off.
+    const w = cfg.tripwire;
+    const half = cfg.construction.tileSize / 2;
+    const ux = Math.cos(st.facing);
+    const uy = Math.sin(st.facing);
+    const crossed = s.enemies.some((e) => {
+      if (e.hp <= 0) return false;
+      const dx = e.x - st.x;
+      const dy = e.y - st.y;
+      const along = dx * ux + dy * uy;
+      const across = Math.abs(-dx * uy + dy * ux);
+      return Math.abs(along) <= half && across <= cfg.enemies[e.type].radius + 4;
+    });
+    if (!crossed) continue;
+    const ids = new Set<number>();
+    for (let i = 0; i < w.blasts; i++) {
+      const f = w.blasts === 1 ? 0 : i / (w.blasts - 1) - 0.5;
+      const bx = st.x + ux * f * w.length;
+      const by = st.y + uy * f * w.length;
+      blast(s, cfg, bx, by, w.blastRadius, w.damage * mult, ids);
+      s.blasts.push({ x: bx, y: by, r: w.blastRadius, life: BLAST_SECONDS - i * 0.06 });
+    }
+    st.destroyed = true;
   }
 }
 
@@ -974,6 +1261,10 @@ function stepBlasts(s: GameState, dt: number): void {
   if (s.blasts.length > 0) {
     for (const b of s.blasts) b.life -= dt;
     s.blasts = s.blasts.filter((b) => b.life > 0);
+  }
+  if (s.notices.length > 0) {
+    for (const n of s.notices) n.life -= dt;
+    s.notices = s.notices.filter((n) => n.life > 0);
   }
   if (s.popups.length > 0) {
     for (const p of s.popups) {

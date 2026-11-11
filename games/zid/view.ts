@@ -6,7 +6,7 @@
 import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
-import { panelModel, type PanelAction, type PanelSlot } from "./panel.js";
+import { panelModel, type BuildPage, type PanelAction, type PanelSlot } from "./panel.js";
 import {
   BLAST_SECONDS,
   POPUP_SECONDS,
@@ -70,6 +70,8 @@ export interface ViewState {
   selected: Tile | null;
   /** Recycle needs a second tap before this game time. */
   recycleArmedUntil: number;
+  /** Which build-menu page is showing. */
+  buildPage: BuildPage;
 }
 
 export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
@@ -94,6 +96,7 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
   "invalid-terrain": "Can't build on that ground",
   occupied: "That tile is taken",
   "limit-reached": "Limit reached · upgrade the base",
+  locked: "Not unlocked yet",
   "insufficient-funds": "Not enough supplies",
 };
 
@@ -133,7 +136,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   const buttonIn = (slot: PanelSlot) => {
     const sel = getView().selected;
     if (!sel) return null;
-    return panelModel(getState(), cfg, sel).buttons.find((b) => b.slot === slot) ?? null;
+    return panelModel(getState(), cfg, sel, getView().buildPage).buttons.find((b) => b.slot === slot) ?? null;
   };
   const slotRegion = (slot: PanelSlot) =>
     rectRegion(
@@ -212,17 +215,18 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.fillStyle = C.ground;
   ctx.fillRect(0, 0, W, H);
   const T = cfg.construction.tileSize;
+  const O = cfg.construction.origin;
   const { cols, rows } = gridSize(cfg);
   ctx.strokeStyle = C.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let c = 0; c <= cols; c++) {
-    ctx.moveTo(c * T, 0);
-    ctx.lineTo(c * T, H);
+    ctx.moveTo(O.x + c * T, 0);
+    ctx.lineTo(O.x + c * T, H);
   }
   for (let r = 0; r <= rows; r++) {
-    ctx.moveTo(0, r * T);
-    ctx.lineTo(W, r * T);
+    ctx.moveTo(0, O.y + r * T);
+    ctx.lineTo(W, O.y + r * T);
   }
   ctx.stroke();
 
@@ -232,10 +236,10 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     for (const t of buildableTiles(cfg)) {
       if (structureAt(s, t.col, t.row)) continue;
       ctx.fillStyle = C.buildable;
-      ctx.fillRect(t.col * T + 3, t.row * T + 3, T - 6, T - 6);
+      ctx.fillRect(O.x + t.col * T + 3, O.y + t.row * T + 3, T - 6, T - 6);
       ctx.strokeStyle = C.buildableEdge;
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(t.col * T + 3, t.row * T + 3, T - 6, T - 6);
+      ctx.strokeRect(O.x + t.col * T + 3, O.y + t.row * T + 3, T - 6, T - 6);
     }
   }
 
@@ -280,12 +284,12 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   // Selected tile and a preview of what would be built.
   const sel = view.selected;
   const selStructure = sel ? structureAt(s, sel.col, sel.row) : null;
-  const model = sel && s.phase !== "lost" ? panelModel(s, cfg, sel) : null;
+  const model = sel && s.phase !== "lost" ? panelModel(s, cfg, sel, view.buildPage) : null;
   const selReason = model?.note ?? null;
   if (sel && selStructure && s.phase !== "lost") {
     ctx.strokeStyle = C.text;
     ctx.lineWidth = 4;
-    ctx.strokeRect(sel.col * T + 2, sel.row * T + 2, T - 4, T - 4);
+    ctx.strokeRect(O.x + sel.col * T + 2, O.y + sel.row * T + 2, T - 4, T - 4);
     ctx.strokeStyle = "rgba(241,238,227,0.4)";
     ctx.lineWidth = 2;
     if (selStructure.turret && !selStructure.destroyed) {
@@ -308,7 +312,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     const ok = selReason === null;
     ctx.strokeStyle = ok ? C.good : C.warn;
     ctx.lineWidth = 4;
-    ctx.strokeRect(sel.col * T + 2, sel.row * T + 2, T - 4, T - 4);
+    ctx.strokeRect(O.x + sel.col * T + 2, O.y + sel.row * T + 2, T - 4, T - 4);
     if (ok) {
       ctx.strokeStyle = "rgba(143,192,107,0.45)";
       ctx.lineWidth = 2;
@@ -335,8 +339,12 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.strokeRect(sh.x - sh.halfSize, sh.y - sh.halfSize, sh.halfSize * 2, sh.halfSize * 2);
   bar(ctx, sh.x - 70, sh.y - sh.halfSize - 26, 140, 12, sh.hp / sh.maxHp, sh.hp / sh.maxHp > 0.35 ? C.good : C.bad);
 
-  // Structures: rubble, barricades, turrets.
+  // Structures: traps, rubble, barricades, weapons.
   for (const sl of s.structures) {
+    if (sl.kind === "mine" || sl.kind === "tripwire") {
+      drawTrap(ctx, cfg, s, sl);
+      continue;
+    }
     if (sl.destroyed) {
       ctx.fillStyle = C.rubble;
       ctx.strokeStyle = C.rockEdge;
@@ -366,21 +374,23 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       continue;
     }
     if (sl.kind === "mortar") drawMortar(ctx, cfg, s, sl);
+    else if (sl.kind === "gatling") drawGatling(ctx, cfg, s, sl);
+    else if (sl.kind === "rocket") drawRocketLauncher(ctx, cfg, s, sl);
     else drawMachineGun(ctx, cfg, s, sl);
     {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
       for (let i = 0; i < sl.turret.speed; i++) {
         ctx.fillStyle = C.warn;
-        ctx.fillRect(sl.x - 30, sl.y + 26 - i * 9, 7, 6);
+        ctx.fillRect(sl.x - 27, sl.y + 22 - i * 8, 6, 5);
       }
       for (let i = 0; i < sl.turret.strength; i++) {
         ctx.fillStyle = C.bad;
-        ctx.fillRect(sl.x + 23, sl.y + 26 - i * 9, 7, 6);
+        ctx.fillRect(sl.x + 21, sl.y + 22 - i * 8, 6, 5);
       }
       // Range pips: blue, along the bottom.
       for (let i = 0; i < sl.turret.range; i++) {
         ctx.fillStyle = "#7fb0d8";
-        ctx.fillRect(sl.x - 12 + i * 9, sl.y + 32, 6, 6);
+        ctx.fillRect(sl.x - 11 + i * 8, sl.y + 27, 5, 5);
       }
     }
   }
@@ -407,6 +417,37 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.lineTo(p.x - p.vx * 0.02, p.y - p.vy * 0.02);
   }
   ctx.stroke();
+
+  // Rockets: smoke trail, flame, body.
+  for (const k of s.rockets) {
+    for (let i = 0; i < k.trail.length; i++) {
+      const [tx, ty] = k.trail[i]!;
+      const a = (i + 1) / k.trail.length;
+      ctx.fillStyle = `${C.smoke}${(0.28 * a).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 3 + (1 - a) * 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const ang = Math.atan2(k.vy, k.vx);
+    const c = Math.cos(ang);
+    const sn = Math.sin(ang);
+    ctx.fillStyle = s.time % 0.1 < 0.05 ? "#ffd27a" : "#ff8a3a";
+    ctx.beginPath();
+    ctx.arc(k.x - c * 10, k.y - sn * 10, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#d9dccf";
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(k.x - c * 8, k.y - sn * 8);
+    ctx.lineTo(k.x + c * 6, k.y + sn * 6);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+    ctx.fillStyle = C.bad;
+    ctx.beginPath();
+    ctx.arc(k.x + c * 7, k.y + sn * 7, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Mortar shells: a dot that rises and falls between mortar and landing spot,
   // with a shadow ring growing at the landing spot.
@@ -563,6 +604,20 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.font = "700 24px system-ui, sans-serif";
     ctx.fillText("Tap a tile to build, or anything you built to manage it", W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
+  }
+
+  // Unlock notices: a banner under the HUD.
+  if (s.notices.length > 0) {
+    const n = s.notices[0]!;
+    const a = Math.min(1, n.life / 0.6, (5 - n.life) / 0.25);
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.fillStyle = "rgba(226,176,74,0.95)";
+    roundRect(ctx, W / 2 - 250, 180, 500, 70, 12);
+    ctx.fill();
+    ctx.fillStyle = C.buttonText;
+    ctx.font = "900 30px system-ui, sans-serif";
+    ctx.fillText(n.text.toUpperCase(), W / 2, 216);
+    ctx.globalAlpha = 1;
   }
 
   // Toast.
@@ -727,4 +782,202 @@ function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: numbe
       ctx.fill();
     }
   }
+}
+
+function drawTrap(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  if (sl.kind === "mine") {
+    if (sl.destroyed) {
+      // Scorch mark.
+      ctx.fillStyle = "rgba(20,18,15,0.7)";
+      ctx.beginPath();
+      ctx.arc(sl.x, sl.y, 18, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    ctx.fillStyle = "#4e5747";
+    ctx.strokeStyle = "#252a21";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(sl.x, sl.y, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#7d8673";
+    ctx.beginPath();
+    ctx.arc(sl.x, sl.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+    // Blinking arming light.
+    const on = (s.time + sl.id * 0.37) % 1.2 < 0.25;
+    ctx.fillStyle = on ? "#ff4a3a" : "#5b2420";
+    ctx.beginPath();
+    ctx.arc(sl.x + 7, sl.y - 7, 3, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  // Trip wire: two stakes and the wire between them, across the approach.
+  const half = cfg.construction.tileSize / 2 - 4;
+  const ux = Math.cos(sl.facing);
+  const uy = Math.sin(sl.facing);
+  const ax = sl.x - ux * half;
+  const ay = sl.y - uy * half;
+  const bx = sl.x + ux * half;
+  const by = sl.y + uy * half;
+  if (sl.destroyed) {
+    ctx.strokeStyle = "rgba(200,190,160,0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax + ux * 10 + 4, ay + uy * 10 + 6);
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx - ux * 10 - 4, by - uy * 10 + 6);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = "#d8cfa6";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    // A faint glint travelling along the wire.
+    const t = (s.time * 0.6 + sl.id * 0.21) % 1;
+    ctx.fillStyle = "rgba(255,250,220,0.8)";
+    ctx.beginPath();
+    ctx.arc(ax + (bx - ax) * t, ay + (by - ay) * t, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    // Charges along the wire.
+    ctx.fillStyle = "#6b5a3a";
+    for (const f of [-0.5, 0, 0.5]) {
+      ctx.fillRect(sl.x + ux * f * half * 1.2 - 4, sl.y + uy * f * half * 1.2 - 4, 8, 8);
+    }
+  }
+  for (const [x, y] of [[ax, ay], [bx, by]] as const) {
+    ctx.fillStyle = "#8a7a55";
+    ctx.strokeStyle = "#3a3222";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+}
+
+function drawGatling(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 34, 52, 6, sl.hp / sl.maxHp, C.warn);
+  const r = cfg.gatling.radius;
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const kick = fresh(s, t.lastShot, 0.05);
+  const bx = sl.x - cos * kick * 2;
+  const by = sl.y - sin * kick * 2;
+  // Body: an octagon.
+  ctx.fillStyle = "#8e978a";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    ctx.lineTo(bx + Math.cos(a) * r, by + Math.sin(a) * r);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  // Barrel cluster: six barrels seen from above, their sideways offset follows
+  // the spin angle so the cluster visibly rotates.
+  const len = r + 16;
+  const px = -sin;
+  const py = cos;
+  const heat = t.spin;
+  for (let i = 0; i < 6; i++) {
+    const a = t.barrel + (i / 6) * Math.PI * 2;
+    const off = Math.sin(a) * 6;
+    const depth = Math.cos(a); // front barrels drawn brighter
+    const shade = Math.round(150 + 70 * depth);
+    const hot = Math.round(heat * 90 * (0.5 + 0.5 * depth));
+    ctx.strokeStyle = `rgb(${Math.min(255, shade + hot)},${shade - Math.round(hot * 0.3)},${shade - hot})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bx + px * off + cos * 6, by + py * off + sin * 6);
+    ctx.lineTo(bx + px * off + cos * len, by + py * off + sin * len);
+    ctx.stroke();
+  }
+  // Barrel collars.
+  ctx.strokeStyle = "#3a3f36";
+  ctx.lineWidth = 3;
+  for (const f of [0.55, 0.95]) {
+    ctx.beginPath();
+    ctx.moveTo(bx + cos * len * f + px * 8, by + sin * len * f + py * 8);
+    ctx.lineTo(bx + cos * len * f - px * 8, by + sin * len * f - py * 8);
+    ctx.stroke();
+  }
+  const tipX = bx + cos * (len + 4);
+  const tipY = by + sin * (len + 4);
+  const flash = fresh(s, t.lastShot, 0.05);
+  if (flash > 0) {
+    ctx.globalAlpha = flash;
+    ctx.fillStyle = C.flash;
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = t.aim + (i * Math.PI) / 4 + t.barrel;
+      const rr = i % 2 === 0 ? 14 : 5;
+      ctx.lineTo(tipX + Math.cos(a) * rr, tipY + Math.sin(a) * rr);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  drawSmoke(ctx, s, tipX, tipY, t.lastShot, 1.1, 4 + 3 * heat);
+}
+
+function drawRocketLauncher(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 34, 52, 6, sl.hp / sl.maxHp, C.warn);
+  const r = cfg.rocket.radius;
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const px = -sin;
+  const py = cos;
+  const kick = fresh(s, t.lastShot, 0.35);
+  // Base plate.
+  ctx.fillStyle = "#6f7564";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  roundRect(ctx, sl.x - r, sl.y - r, r * 2, r * 2, 6);
+  ctx.fill();
+  ctx.stroke();
+  // Twin tubes, kicking back when one fires.
+  const back = kick * 6;
+  for (const side of [-1, 1]) {
+    const ox = sl.x + px * side * 7 - cos * back;
+    const oy = sl.y + py * side * 7 - sin * back;
+    ctx.strokeStyle = "#3c4436";
+    ctx.lineWidth = 10;
+    ctx.beginPath();
+    ctx.moveTo(ox - cos * 14, oy - sin * 14);
+    ctx.lineTo(ox + cos * 18, oy + sin * 18);
+    ctx.stroke();
+    ctx.strokeStyle = "#c7cbbd";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(ox - cos * 12, oy - sin * 12);
+    ctx.lineTo(ox + cos * 16, oy + sin * 16);
+    ctx.stroke();
+    ctx.fillStyle = "#24281f";
+    ctx.beginPath();
+    ctx.arc(ox + cos * 17, oy + sin * 17, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Back-blast: a cone of fire and smoke behind the launcher right after firing.
+  const blastK = fresh(s, t.lastShot, 0.45);
+  if (blastK > 0) {
+    const bx = sl.x - cos * (r + 6);
+    const by = sl.y - sin * (r + 6);
+    for (let i = 0; i < 4; i++) {
+      const d = (1 - blastK) * 30 + i * 7;
+      ctx.fillStyle = i === 0 && blastK > 0.6 ? `rgba(255,200,110,${blastK.toFixed(3)})` : `${C.smoke}${(0.35 * blastK).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(bx - cos * d + px * (i - 1.5) * 4, by - sin * d + py * (i - 1.5) * 4, 6 + (1 - blastK) * 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  drawSmoke(ctx, s, sl.x + cos * 18, sl.y + sin * 18, t.lastShot, 1.0, 5);
 }

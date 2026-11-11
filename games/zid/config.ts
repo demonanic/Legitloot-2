@@ -29,6 +29,10 @@ export interface BaseLevel {
   cost: number;
   machineGuns: number;
   mortars: number;
+  gatlings: number;
+  rockets: number;
+  /** Mines and trip wires together. */
+  traps: number;
   maxHp: number;
 }
 
@@ -84,11 +88,14 @@ export interface GameConfig {
    */
   stronghold: { x: number; y: number; halfSize: number; maxHp: number; levels: BaseLevel[] };
   /**
-   * Construction area. Tiles are square and sized for touch: 80 world units is
-   * about 46 CSS px on a 412 px-wide phone (44 px is the minimum touch target).
+   * Construction area. Tiles are square: 68 world units is about 39 CSS px on
+   * a 412 px-wide phone, a little under the 44 px touch guideline, so taps
+   * near a tile's edge are forgiven (see `forgivingTile`). The grid starts at
+   * `origin` so it sits centred in the world.
    */
   construction: {
     tileSize: number;
+    origin: { x: number; y: number };
     /** Property boundary, world units, in order. A tile is inside when its centre is. */
     perimeter: [number, number][];
     /** Tiles inside the boundary that cannot be built on (placeholder terrain), as [col, row]. */
@@ -128,6 +135,49 @@ export interface GameConfig {
     /** Upgrade prices are the turret prices times this. */
     upgradeCostMultiplier: number;
   };
+  /** Gatling gun: fire rate spins up from `minRate` to `maxRate` while it has targets. */
+  gatling: {
+    cost: number;
+    range: number;
+    minRate: number;
+    maxRate: number;
+    /** Seconds to spin from stopped to full speed, and back down. */
+    spinUpSeconds: number;
+    spinDownSeconds: number;
+    damage: number;
+    projectileSpeed: number;
+    radius: number;
+    maxHp: number;
+    upgradeCostMultiplier: number;
+  };
+  /** Rocket launcher: slow homing rockets, a direct hit plus splash. */
+  rocket: {
+    cost: number;
+    range: number;
+    fireRate: number;
+    damage: number;
+    splashDamage: number;
+    splashRadius: number;
+    speed: number;
+    /** Radians per second the rocket can turn to follow its target. */
+    turnRate: number;
+    maxLifetime: number;
+    radius: number;
+    maxHp: number;
+    upgradeCostMultiplier: number;
+  };
+  /**
+   * Traps sit on tiles but never block zombies and are never attacked. Each
+   * goes off once; a spent trap is re-armed between waves (like rebuilding
+   * rubble) or recycled.
+   */
+  mine: { cost: number; triggerRadius: number; blastRadius: number; damage: number };
+  /** Trip wire: the first zombie to cross sets off a line of blasts along the wire. */
+  tripwire: { cost: number; length: number; blasts: number; blastRadius: number; damage: number };
+  /** Trap damage grows with the base: +this share per base level above the first. */
+  trapDamagePerBaseLevel: number;
+  /** The run's wave from which each kind can be built (1 = from the start). */
+  unlocks: Record<"machine-gun" | "gatling" | "rocket" | "mortar" | "barricade" | "mine" | "tripwire", number>;
   /** Barricades block movement; reinforcing raises their maximum health. */
   barricade: { cost: number; maxHp: number; reinforce: UpgradePath };
   /**
@@ -165,43 +215,76 @@ export const baseConfig: GameConfig = {
   currencyLabel: "Supplies",
   stronghold: {
     x: 360,
-    y: 660,
-    halfSize: 52,
+    y: 640,
+    halfSize: 44,
     maxHp: 400,
     levels: [
-      { cost: 0, machineGuns: 3, mortars: 1, maxHp: 400 },
-      { cost: 100, machineGuns: 5, mortars: 2, maxHp: 480 },
-      { cost: 180, machineGuns: 7, mortars: 3, maxHp: 560 },
-      { cost: 280, machineGuns: 9, mortars: 4, maxHp: 640 },
-      { cost: 400, machineGuns: 12, mortars: 5, maxHp: 720 },
+      { cost: 0, machineGuns: 3, mortars: 1, gatlings: 1, rockets: 1, traps: 6, maxHp: 400 },
+      { cost: 100, machineGuns: 5, mortars: 2, gatlings: 1, rockets: 1, traps: 10, maxHp: 480 },
+      { cost: 180, machineGuns: 7, mortars: 3, gatlings: 2, rockets: 2, traps: 14, maxHp: 560 },
+      { cost: 280, machineGuns: 9, mortars: 4, gatlings: 3, rockets: 2, traps: 18, maxHp: 640 },
+      { cost: 400, machineGuns: 12, mortars: 5, gatlings: 4, rockets: 3, traps: 24, maxHp: 720 },
     ],
   },
   construction: {
-    tileSize: 80,
+    tileSize: 68,
+    origin: { x: 20, y: 28 },
     perimeter: [
-      [120, 330], [400, 300], [610, 360], [640, 560], [600, 720], [650, 900],
-      [560, 1030], [330, 1060], [130, 990], [90, 780], [140, 600], [80, 450],
+      [95, 255], [360, 215], [625, 270], [650, 520], [615, 700], [650, 900],
+      [590, 1070], [360, 1110], [120, 1040], [75, 800], [110, 600], [70, 420],
     ],
     invalidTerrain: [
-      [2, 5],
-      [6, 11],
+      [2, 6],
+      [7, 12],
+      [4, 13],
     ],
   },
   economy: { startCurrency: 100 },
-  turret: { cost: 50, range: 200, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22, maxHp: 120 },
+  turret: { cost: 50, range: 185, fireRate: 5, damage: 4, projectileSpeed: 610, radius: 19, maxHp: 120 },
   mortar: {
     cost: 80,
-    range: 440,
-    minRange: 130,
+    range: 375,
+    minRange: 110,
     fireRate: 0.5,
     damage: 30,
-    blastRadius: 75,
+    blastRadius: 64,
     shellBaseSeconds: 0.5,
-    shellSpeed: 700,
-    radius: 24,
+    shellSpeed: 600,
+    radius: 20,
     maxHp: 100,
     upgradeCostMultiplier: 1.5,
   },
+  gatling: {
+    cost: 90,
+    range: 160,
+    minRate: 3,
+    maxRate: 16,
+    spinUpSeconds: 1.6,
+    spinDownSeconds: 1.2,
+    damage: 2.5,
+    projectileSpeed: 680,
+    radius: 20,
+    maxHp: 140,
+    upgradeCostMultiplier: 1.3,
+  },
+  rocket: {
+    cost: 120,
+    range: 300,
+    fireRate: 0.4,
+    damage: 50,
+    splashDamage: 30,
+    splashRadius: 52,
+    speed: 330,
+    turnRate: 4,
+    maxLifetime: 3,
+    radius: 20,
+    maxHp: 110,
+    upgradeCostMultiplier: 1.6,
+  },
+  mine: { cost: 15, triggerRadius: 34, blastRadius: 64, damage: 120 },
+  tripwire: { cost: 25, length: 204, blasts: 5, blastRadius: 34, damage: 70 },
+  trapDamagePerBaseLevel: 0.6,
+  unlocks: { "machine-gun": 1, mortar: 1, barricade: 1, mine: 1, tripwire: 3, gatling: 5, rocket: 8 },
   barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
   repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25 },
   recycle: { intactShare: 0.5, rubbleShare: 0.25 },
@@ -214,9 +297,9 @@ export const baseConfig: GameConfig = {
     range: { costs: [25, 40, 60], perLevel: 0.2 },
   },
   enemies: {
-    walker: { maxHp: 26, speed: 39, radius: 14, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
-    runner: { maxHp: 14, speed: 83, radius: 11, structureDamage: 5, attackCooldown: 0.6, drop: { chance: 0.5, min: 2, max: 4 } },
-    brute: { maxHp: 150, speed: 22, radius: 22, structureDamage: 30, attackCooldown: 1.4, drop: { chance: 1, min: 12, max: 20 } },
+    walker: { maxHp: 26, speed: 33, radius: 12, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
+    runner: { maxHp: 14, speed: 71, radius: 9, structureDamage: 5, attackCooldown: 0.6, drop: { chance: 0.5, min: 2, max: 4 } },
+    brute: { maxHp: 150, speed: 19, radius: 19, structureDamage: 30, attackCooldown: 1.4, drop: { chance: 1, min: 12, max: 20 } },
   },
   wave: { prepSeconds: 20, warningSeconds: 3, edges: ["north", "south", "east", "west"] },
   waves: {
@@ -257,7 +340,7 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
   return {
     ...base,
     economy: { startCurrency: 0 },
-    stronghold: { ...base.stronghold, maxHp: 1e9, levels: [{ cost: 0, machineGuns: 99, mortars: 99, maxHp: 1e9 }] },
+    stronghold: { ...base.stronghold, maxHp: 1e9, levels: [{ cost: 0, machineGuns: 99, mortars: 99, gatlings: 99, rockets: 99, traps: 99, maxHp: 1e9 }] },
     // Long range and slow walkers keep projectiles in flight for a steady load,
     // instead of collapsing to point-blank shots once walkers reach the turrets.
     turret: { ...base.turret, cost: 0, fireRate: 100, damage: 0, range: 1500 },

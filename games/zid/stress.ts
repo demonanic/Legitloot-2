@@ -9,10 +9,10 @@ import { buildTurret, createState, startWaveNow, type GameState } from "./sim.js
 
 /** Four turrets around the stronghold, as [col, row]. */
 export const STRESS_TURRET_TILES: readonly [number, number][] = [
-  [2, 8],
+  [3, 8],
   [6, 8],
-  [2, 6],
-  [6, 10],
+  [3, 10],
+  [6, 7],
 ];
 
 export function createStressRun(cfg: GameConfig, seed: number): GameState {

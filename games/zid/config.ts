@@ -53,7 +53,7 @@ export const baseConfig: GameConfig = {
     { id: "west", dx: -88, dy: 0 },
     { id: "east", dx: 88, dy: 0 },
   ],
-  economy: { startCurrency: 60 },
+  economy: { startCurrency: 100 },
   turret: { cost: 50, range: 300, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22 },
   walker: { maxHp: 26, speed: 30, radius: 14, structureDamage: 8, attackCooldown: 1, reward: 6 },
   wave: { prepSeconds: 20, warningSeconds: 3, count: 46, spawnSeconds: 40, edges: ["north", "south", "east", "west"] },

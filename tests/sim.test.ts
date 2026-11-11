@@ -230,6 +230,16 @@ test("balance: a single turret is not enough (the second mount matters)", () => 
   assert.ok(lost >= 8, `one turret lost only ${lost}/10`);
 });
 
+test("balance: starting supplies cover both mounts, and that clears wave 1 on 20 seeds", () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const s = createState(baseConfig, seed);
+    assert.deepEqual(buildTurret(s, baseConfig, "west"), { ok: true });
+    assert.deepEqual(buildTurret(s, baseConfig, "east"), { ok: true }, "second mount affordable before wave 1");
+    for (let i = 0; i < 30 * 300 && s.wavesCleared === 0 && s.phase !== "lost"; i++) step(s, baseConfig, DT);
+    assert.equal(s.wavesCleared, 1, `seed ${seed} should clear wave 1`);
+  }
+});
+
 test("a finished run stays finished", () => {
   const s = createState(baseConfig, 3);
   runToEnd(s, baseConfig);

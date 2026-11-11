@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d0e0d">
+<meta name="robots" content="noindex">
+<link rel="icon" href="data:,">
+<title>Zombie Invasion Defense — Milestone 1 (working title)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0e0d; overflow: hidden; overscroll-behavior: none; }
+  #game { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; -webkit-user-select: none; user-select: none; }
+  #diag { position: fixed; left: 8px; bottom: 8px; margin: 0; padding: 6px 8px; background: rgba(0,0,0,.7); color: #cfe3b0;
+          font: 12px/1.4 ui-monospace, monospace; white-space: pre; pointer-events: none; border-radius: 4px; }
+  noscript { color: #eee; font: 16px system-ui; position: fixed; inset: 0; display: grid; place-items: center; }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Zombie Invasion Defense game"></canvas>
+<pre id="diag" hidden></pre>
+<noscript>This game needs JavaScript.</noscript>
+<script type="module" src="./games/zid/main.js"></script>
+</body>
+</html>

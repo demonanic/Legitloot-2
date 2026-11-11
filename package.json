@@ -1,0 +1,20 @@
+{
+  "name": "legitloot-2",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LegitLoot game framework and Reference Game 01 (Zombie Invasion Defense, working title)",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/build-site.mjs",
+    "check": "tsc -p tsconfig.json --noEmit && node scripts/check-engine-isolation.mjs",
+    "test": "tsc -p tsconfig.json && node --test dist/tests/*.test.js",
+    "serve": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "~6.0.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

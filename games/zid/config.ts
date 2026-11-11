@@ -63,16 +63,17 @@ export const baseConfig: GameConfig = {
 
 /**
  * Performance test setup for the acceptance check "60 FPS with 50 zombies and
- * 100 projectiles on screen". Both hardpoints start built, walkers are
- * effectively unkillable and all 50 spawn at once.
+ * 100 projectiles on screen". Walkers are effectively unkillable and all 50
+ * spawn at once. The run starts in a short preparation phase so the stress
+ * turrets are built through the normal, legal build path (see stress.ts).
  */
 export function stressConfig(base: GameConfig = baseConfig): GameConfig {
   return {
     ...base,
     economy: { startCurrency: 0 },
     stronghold: { ...base.stronghold, maxHp: 1e9 },
-    turret: { ...base.turret, fireRate: 260, damage: 0 },
+    turret: { ...base.turret, cost: 0, fireRate: 260, damage: 0 },
     walker: { ...base.walker, maxHp: 1e9, speed: 12 },
-    wave: { ...base.wave, prepSeconds: 0, warningSeconds: 0, count: 50, spawnSeconds: 0.1 },
+    wave: { ...base.wave, prepSeconds: 1, warningSeconds: 0, count: 50, spawnSeconds: 0.1 },
   };
 }

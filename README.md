@@ -16,6 +16,14 @@ The smallest playable proof, fully offline:
 - On-screen diagnostics (tap **FPS**).
 - Placeholder art only. All balance numbers are provisional and live in `games/zid/config.ts`.
 
+### Challenge update
+
+- **Enemies:** Walkers, Runners (fast, fragile, from wave 2) and Brutes (slow, tough, heavy stronghold damage, from wave 4).
+- **Waves get harder every time:** more enemies, compounding enemy health, a shifting mix, and from wave 3 most of a wave can come from one side.
+- **Random Supplies drops** per kill, weighted by enemy type and reproducible from the seed.
+- **Turret menu** (tap a turret between waves): Speed and Damage upgrades, three levels each. A turret can take both. **Recycle** removes the turret with no refund and needs a second tap.
+- **Balance:** `node scripts/balance.mjs [seeds]` plays scripted runs and prints survival and per-wave numbers. Current provisional target: a sensible player usually falls between waves 10 and 15.
+
 Not in this milestone: free placement (Zone B), other turrets, barricades, other enemies, the adaptive scheduler, permanent progression, saves, sign-in, the portal, expeditions, monetization and sound.
 
 ### URL options
@@ -49,6 +57,7 @@ npm run check   # type-check + engine isolation
 npm test        # unit tests
 npm run build   # assembles site/
 npm run serve   # serves site/ at http://localhost:8080
+node scripts/balance.mjs 24   # balance report (after build or test)
 ```
 
 ## Preview deployment

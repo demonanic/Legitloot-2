@@ -6,7 +6,17 @@
 import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
-import { checkBuild, remainingEnemies, structureAt, type BuildRejection, type GameState } from "./sim.js";
+import {
+  checkBuild,
+  checkUpgrade,
+  nextUpgradeCost,
+  remainingEnemies,
+  structureAt,
+  turretStats,
+  type BuildRejection,
+  type GameState,
+  type ManageRejection,
+} from "./sim.js";
 
 const C = {
   ground: "#1c1e1b",
@@ -24,6 +34,8 @@ const C = {
   walker: "#6e7b5b",
   walkerEdge: "#2f3527",
   walkerAttack: "#9c4a3c",
+  runner: "#a9b88e",
+  brute: "#3f4a33",
   bullet: "#e9d68d",
   hudBg: "rgba(10,11,10,0.72)",
   text: "#eef0ea",
@@ -42,9 +54,19 @@ export interface Toast {
 
 export interface ViewState {
   toast: Toast | null;
-  /** Tile chosen for construction, awaiting confirmation. UI state only. */
+  /** Tile chosen for construction or management, awaiting a choice. UI state only. */
   selected: Tile | null;
+  /** Recycle needs a second tap before this game time. */
+  recycleArmedUntil: number;
 }
+
+export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
+  "run-over": "The run is over",
+  "assault-active": "Upgrade between waves",
+  "no-such-structure": "Nothing there",
+  "max-level": "Already at max level",
+  "insufficient-funds": "Not enough supplies",
+};
 
 /** Player-facing text for each build rejection. */
 export const BUILD_MESSAGES: Record<BuildRejection, string> = {
@@ -61,6 +83,9 @@ export interface UiActions {
   startNow(): void;
   confirmBuild(): void;
   cancelSelection(): void;
+  upgradeSpeed(): void;
+  upgradeStrength(): void;
+  recycle(): void;
   restart(): void;
   toggleDiagnostics(): void;
 }
@@ -73,6 +98,11 @@ export function buttonRects(cfg: GameConfig) {
     startNow: { x: w / 2 - 150, y: h - 132, w: 300, h: 76 },
     build: { x: 40, y: h - 132, w: 400, h: 76 },
     cancel: { x: 460, y: h - 132, w: 220, h: 76 },
+    speed: { x: 40, y: h - 224, w: 310, h: 76 },
+    strength: { x: 370, y: h - 224, w: 310, h: 76 },
+    recycle: { x: 40, y: h - 132, w: 400, h: 76 },
+    /** Backing behind the bottom menus; blocks taps on tiles underneath. */
+    panel: { x: 0, y: h - 300, w, h: 300 },
     restart: { x: w / 2 - 150, y: h / 2 + 150, w: 300, h: 84 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
   };
@@ -82,9 +112,19 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   const r = buttonRects(cfg);
   const over = () => getState().phase === "lost";
   const selecting = () => getView().selected !== null && !over();
+  const selectedStructure = () => {
+    const sel = getView().selected;
+    return sel ? structureAt(getState(), sel.col, sel.row) : null;
+  };
+  const managing = () => selecting() && selectedStructure() !== null;
+  const placing = () => selecting() && selectedStructure() === null;
   return [
+    rectRegion("panel", r.panel, () => true, selecting),
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
-    rectRegion("build", r.build, () => act.confirmBuild(), selecting),
+    rectRegion("build", r.build, () => act.confirmBuild(), placing),
+    rectRegion("speed", r.speed, () => act.upgradeSpeed(), managing),
+    rectRegion("strength", r.strength, () => act.upgradeStrength(), managing),
+    rectRegion("recycle", r.recycle, () => act.recycle(), managing),
     rectRegion("cancel", r.cancel, () => act.cancelSelection(), selecting),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
     // While the end screen is up it blocks all world taps; only its button acts.
@@ -210,8 +250,20 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
 
   // Selected tile and a preview of what would be built.
   const sel = view.selected;
-  const selReason = sel ? checkBuild(s, cfg, sel.col, sel.row) : null;
-  if (sel && s.phase !== "lost") {
+  const selStructure = sel ? structureAt(s, sel.col, sel.row) : null;
+  const selReason = sel && !selStructure ? checkBuild(s, cfg, sel.col, sel.row) : null;
+  if (sel && selStructure && s.phase !== "lost") {
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(sel.col * T + 2, sel.row * T + 2, T - 4, T - 4);
+    ctx.strokeStyle = "rgba(241,238,227,0.4)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 8]);
+    ctx.beginPath();
+    ctx.arc(selStructure.x, selStructure.y, cfg.turret.range, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if (sel && s.phase !== "lost") {
     const c = tileCenter(cfg, sel.col, sel.row);
     const ok = selReason === null;
     ctx.strokeStyle = ok ? C.good : C.warn;
@@ -258,20 +310,29 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       ctx.lineTo(sl.x + Math.cos(sl.turret.aim) * (cfg.turret.radius + 12), sl.y + Math.sin(sl.turret.aim) * (cfg.turret.radius + 12));
       ctx.stroke();
       ctx.lineCap = "butt";
+      // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
+      for (let i = 0; i < sl.turret.speed; i++) {
+        ctx.fillStyle = C.warn;
+        ctx.fillRect(sl.x - 30, sl.y + 26 - i * 9, 7, 6);
+      }
+      for (let i = 0; i < sl.turret.strength; i++) {
+        ctx.fillStyle = C.bad;
+        ctx.fillRect(sl.x + 23, sl.y + 26 - i * 9, 7, 6);
+      }
     }
   }
 
-  // Walkers.
-  const wr = cfg.walker.radius;
+  // Zombies: walkers (olive), runners (small, pale), brutes (large, dark).
   for (const e of s.enemies) {
-    ctx.fillStyle = e.attacking ? C.walkerAttack : C.walker;
+    const r = cfg.enemies[e.type].radius;
+    ctx.fillStyle = e.attacking ? C.walkerAttack : e.type === "runner" ? C.runner : e.type === "brute" ? C.brute : C.walker;
     ctx.strokeStyle = C.walkerEdge;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = e.type === "brute" ? 4 : 3;
     ctx.beginPath();
-    ctx.arc(e.x, e.y, wr, 0, Math.PI * 2);
+    ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    if (e.hp < cfg.walker.maxHp) bar(ctx, e.x - wr, e.y - wr - 9, wr * 2, 4, e.hp / cfg.walker.maxHp, C.bad);
+    if (e.hp < e.maxHp) bar(ctx, e.x - r, e.y - r - 9, r * 2, 4, e.hp / e.maxHp, C.bad);
   }
 
   // Projectiles, drawn as short tracers.
@@ -325,8 +386,39 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText("INCOMING", W / 2, 300);
   }
 
-  // Construction panel, or the prompt and skip button.
+  // Turret panel, construction panel, or the prompt and skip button.
   if (sel && s.phase !== "lost") {
+    ctx.fillStyle = "rgba(10,11,10,0.9)";
+    ctx.fillRect(r.panel.x, r.panel.y, r.panel.w, r.panel.h);
+    ctx.strokeStyle = C.grid;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, r.panel.y);
+    ctx.lineTo(W, r.panel.y);
+    ctx.stroke();
+  }
+  if (sel && selStructure && s.phase !== "lost") {
+    const t = selStructure.turret;
+    const st = turretStats(cfg, t);
+    ctx.fillStyle = C.text;
+    ctx.font = "700 24px system-ui, sans-serif";
+    ctx.fillText(
+      `Machine gun · ${st.fireRate.toFixed(1)} shots/s · ${st.damage.toFixed(1)} damage`,
+      W / 2,
+      r.speed.y - 40,
+    );
+    const label = (name: string, path: "speed" | "strength") => {
+      const cost = nextUpgradeCost(cfg, selStructure, path);
+      const max = cfg.upgrades[path].costs.length;
+      return cost === null ? `${name} MAX` : `${name} ${t[path] + 1}/${max} · ${cost}`;
+    };
+    const style = (path: "speed" | "strength") => (checkUpgrade(s, cfg, selStructure.id, path) ? "disabled" : "primary");
+    button(ctx, r.speed, label("Speed", "speed"), style("speed"));
+    button(ctx, r.strength, label("Damage", "strength"), style("strength"));
+    const armed = view.recycleArmedUntil > s.time;
+    button(ctx, r.recycle, armed ? "Tap again: recycle" : "Recycle (no refund)", s.phase === "wave" ? "disabled" : "secondary");
+    button(ctx, r.cancel, "Close", "secondary");
+  } else if (sel && s.phase !== "lost") {
     ctx.fillStyle = selReason ? C.warn : C.text;
     ctx.font = "700 24px system-ui, sans-serif";
     ctx.fillText(selReason ? BUILD_MESSAGES[selReason] : `Machine-gun turret · range ${cfg.turret.range}`, W / 2, r.build.y - 40);
@@ -335,7 +427,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   } else if (s.phase === "prep") {
     ctx.fillStyle = C.text;
     ctx.font = "700 24px system-ui, sans-serif";
-    ctx.fillText(`Tap a tile inside the fence to place a turret (${cfg.turret.cost})`, W / 2, r.startNow.y - 40);
+    ctx.fillText(`Tap a tile to build (${cfg.turret.cost}) or a turret to upgrade`, W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
   }
 

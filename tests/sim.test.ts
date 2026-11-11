@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { baseConfig, type GameConfig } from "../games/zid/config.js";
+import { wavePlan } from "../games/zid/waves.js";
 import {
   buildTurret,
   createState,
@@ -18,8 +19,10 @@ const W: [number, number] = [2, 8];
 const E: [number, number] = [6, 8];
 const at = (s: GameState, t: [number, number]) => s.structures.find((st) => st.col === t[0] && st.row === t[1]) ?? null;
 
-function enemy(s: GameState, x: number, y: number, hp = baseConfig.walker.maxHp): Enemy {
-  const e: Enemy = { id: s.nextEnemyId++, x, y, hp, attackCooldown: 0, attacking: false };
+const WALKER = baseConfig.enemies.walker;
+
+function enemy(s: GameState, x: number, y: number, hp = WALKER.maxHp): Enemy {
+  const e: Enemy = { id: s.nextEnemyId++, type: "walker", maxHp: hp, x, y, hp, attackCooldown: 0, attacking: false };
   s.enemies.push(e);
   return e;
 }
@@ -67,16 +70,18 @@ test("build: off-grid tiles and finished runs are rejected", () => {
   assert.equal(s.currency, c);
 });
 
-test("damage: a kill awards the reward exactly once", () => {
+test("damage: a kill pays its random drop exactly once", () => {
   const s = createState(baseConfig, 1);
   const e = enemy(s, 0, 0);
   const c0 = s.currency;
-  assert.equal(damageEnemy(s, baseConfig, e, baseConfig.walker.maxHp - 1), false);
+  assert.equal(damageEnemy(s, baseConfig, e, WALKER.maxHp - 1), false);
   assert.equal(s.kills, 0);
   assert.equal(damageEnemy(s, baseConfig, e, 5), true);
   assert.equal(damageEnemy(s, baseConfig, e, 5), false, "a dead enemy cannot die twice");
   assert.equal(s.kills, 1);
-  assert.equal(s.currency, c0 + baseConfig.walker.reward);
+  const gained = s.currency - c0;
+  assert.equal(gained, s.earned);
+  assert.ok(gained === 0 || (gained >= WALKER.drop.min && gained <= WALKER.drop.max), `drop ${gained}`);
 });
 
 test("projectiles hit and damage the first enemy they touch", () => {
@@ -86,7 +91,7 @@ test("projectiles hit and damage the first enemy they touch", () => {
   s.phase = "wave";
   s.nextSpawn = s.spawns.length; // no natural spawns
   step(s, baseConfig, DT);
-  assert.equal(e.hp, baseConfig.walker.maxHp - 4);
+  assert.equal(e.hp, WALKER.maxHp - 4);
   assert.equal(s.projectiles.length, 0, "the projectile is consumed on hit");
 });
 
@@ -155,18 +160,19 @@ test("clearing a wave returns to preparation and the loop continues", () => {
   buildTurret(s, baseConfig, ...W);
   s.currency += baseConfig.turret.cost;
   buildTurret(s, baseConfig, ...E);
+  const afterBuilding = s.currency;
   startWaveNow(s, baseConfig);
   let guard = 0;
   while (s.phase === "wave" && guard++ < 30 * 300) step(s, baseConfig, DT);
   assert.equal(s.phase, "prep", "a cleared wave goes back to prep");
   assert.equal(s.wave, 2);
   assert.equal(s.wavesCleared, 1);
-  assert.equal(s.kills, baseConfig.wave.count);
+  assert.equal(s.kills, wavePlan(baseConfig, 1).count);
   assert.equal(s.phaseTimer, baseConfig.wave.prepSeconds);
-  assert.equal(s.spawns.length, baseConfig.wave.count, "the next wave is scheduled");
+  assert.equal(s.spawns.length, wavePlan(baseConfig, 2).count, "the next wave is scheduled");
   assert.equal(s.nextSpawn, 0);
-  const supplies = s.currency;
-  assert.ok(supplies > 0, "supplies earned in wave 1 carry into wave 2's prep");
+  assert.equal(s.currency, afterBuilding + s.earned, "supplies earned in wave 1 carry into wave 2's prep");
+  assert.ok(s.earned > 0);
   // The countdown then launches wave 2 automatically.
   for (let i = 0; i < (baseConfig.wave.prepSeconds + baseConfig.wave.warningSeconds) * 30 + 4; i++) step(s, baseConfig, DT);
   assert.equal(s.phase, "wave");
@@ -213,7 +219,7 @@ test("balance: both mounts built before the assault clear wave 1 on 20 seeds", (
     buildTurret(s, baseConfig, ...E);
     for (let i = 0; i < 30 * 300 && s.wavesCleared === 0 && s.phase !== "lost"; i++) step(s, baseConfig, DT);
     assert.equal(s.wavesCleared, 1, `seed ${seed} should clear wave 1`);
-    assert.equal(s.kills, baseConfig.wave.count);
+    assert.equal(s.kills, wavePlan(baseConfig, 1).count);
   }
 });
 

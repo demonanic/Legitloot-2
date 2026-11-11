@@ -1,18 +1,24 @@
 /**
- * Pure, deterministic simulation for Milestone 1.
+ * Pure, deterministic game simulation.
  *
  * No DOM, no clock, no Math.random: given the same seed, config and commands,
  * the state after N steps is identical. All state is plain JSON.
  */
 
-import type { Edge, GameConfig } from "./config.js";
+import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig } from "./config.js";
 import { tileCenter, tileStatus, type TileStatus } from "./grid.js";
+import { wavePlan } from "./waves.js";
 
 /** The run is endless: prep -> warning -> wave repeats until the stronghold falls ("lost"). */
 export type Phase = "prep" | "warning" | "wave" | "lost";
 
+export type UpgradePathId = "speed" | "strength";
+
 export interface Turret {
   cooldown: number;
+  /** Upgrade levels; a turret may take both paths. */
+  speed: number;
+  strength: number;
   /** Radians; for drawing only. */
   aim: number;
   targetId: number | null;
@@ -34,6 +40,8 @@ export interface Structure {
 
 export interface Enemy {
   id: number;
+  type: EnemyType;
+  maxHp: number;
   x: number;
   y: number;
   hp: number;
@@ -52,6 +60,8 @@ export interface Projectile {
 
 export interface Spawn {
   at: number;
+  type: EnemyType;
+  hp: number;
   x: number;
   y: number;
 }
@@ -80,6 +90,8 @@ export interface GameState {
   nextSpawn: number;
   nextEnemyId: number;
   kills: number;
+  /** Supplies earned from kills this run (for reports). */
+  earned: number;
   spawned: number;
   shotsFired: number;
   damageTaken: number;
@@ -94,9 +106,9 @@ function nextRandom(s: GameState): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-function edgePoint(s: GameState, cfg: GameConfig, edge: Edge): { x: number; y: number } {
+function edgePoint(s: GameState, cfg: GameConfig, edge: Edge, radius: number): { x: number; y: number } {
   const { width: w, height: h } = cfg.world;
-  const pad = cfg.walker.radius + 4;
+  const pad = radius + 4;
   const u = nextRandom(s);
   switch (edge) {
     case "north":
@@ -131,6 +143,7 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     nextSpawn: 0,
     nextEnemyId: 1,
     kills: 0,
+    earned: 0,
     spawned: 0,
     shotsFired: 0,
     damageTaken: 0,
@@ -139,21 +152,34 @@ export function createState(cfg: GameConfig, seed: number): GameState {
   return s;
 }
 
-/**
- * Pre-roll one wave's spawn schedule so it is fixed by the seed.
- * Every wave uses the same configured size: the wave scaling curve is an open decision.
- */
+function pickType(s: GameState, mix: Record<EnemyType, number>): EnemyType {
+  let u = nextRandom(s);
+  for (const t of ENEMY_TYPES) {
+    if (u < mix[t]) return t;
+    u -= mix[t];
+  }
+  return "walker";
+}
+
+/** Pre-roll the current wave's spawn schedule from its plan, so it is fixed by the seed. */
 function rollWave(s: GameState, cfg: GameConfig): void {
   s.spawns = [];
   s.nextSpawn = 0;
   s.waveTime = 0;
-  const n = cfg.wave.count;
-  const gap = n > 1 ? cfg.wave.spawnSeconds / n : 0;
+  const plan = wavePlan(cfg, s.wave);
+  const edges = cfg.wave.edges;
+  // A lopsided wave favours one side, chosen by the seed.
+  const main = plan.lopsidedShare > 0 ? edges[Math.floor(nextRandom(s) * edges.length)] : undefined;
+  const n = plan.count;
+  const gap = n > 1 ? plan.spawnSeconds / n : 0;
   for (let i = 0; i < n; i++) {
-    const edge = cfg.wave.edges[Math.floor(nextRandom(s) * cfg.wave.edges.length)] ?? "north";
+    const type = pickType(s, plan.mix);
+    const roll = nextRandom(s);
+    const edge = main && roll < plan.lopsidedShare ? main : edges[Math.floor(nextRandom(s) * edges.length)] ?? "north";
     const jitter = (nextRandom(s) - 0.5) * gap * 0.8;
-    const p = edgePoint(s, cfg, edge);
-    s.spawns.push({ at: Math.max(0, i * gap + jitter), x: p.x, y: p.y });
+    const p = edgePoint(s, cfg, edge, cfg.enemies[type].radius);
+    const hp = Math.round(cfg.enemies[type].maxHp * plan.hpMultiplier);
+    s.spawns.push({ at: Math.max(0, i * gap + jitter), type, hp, x: p.x, y: p.y });
   }
   s.spawns.sort((a, b) => a.at - b.at);
 }
@@ -204,10 +230,70 @@ export function buildTurret(s: GameState, cfg: GameConfig, col: number, row: num
     row,
     x: c.x,
     y: c.y,
-    turret: { cooldown: 0, aim: -Math.PI / 2, targetId: null },
+    turret: { cooldown: 0, speed: 0, strength: 0, aim: -Math.PI / 2, targetId: null },
   };
   s.structures.push(structure);
   return { ok: true, structure };
+}
+
+export type ManageRejection = "run-over" | "assault-active" | "no-such-structure" | "max-level" | "insufficient-funds";
+export type ManageResult = { ok: true } | { ok: false; reason: ManageRejection };
+
+export function structureById(s: GameState, id: number): Structure | null {
+  return s.structures.find((st) => st.id === id) ?? null;
+}
+
+/** Cost of the next level on a path, or null at max level. */
+export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePathId): number | null {
+  const costs = cfg.upgrades[path].costs;
+  const level = st.turret[path];
+  return level < costs.length ? costs[level]! : null;
+}
+
+/** Why an upgrade can't happen right now, or null if it can. Pure. */
+export function checkUpgrade(s: GameState, cfg: GameConfig, id: number, path: UpgradePathId): ManageRejection | null {
+  if (s.phase === "lost") return "run-over";
+  if (s.phase === "wave") return "assault-active";
+  const st = structureById(s, id);
+  if (!st) return "no-such-structure";
+  const cost = nextUpgradeCost(cfg, st, path);
+  if (cost === null) return "max-level";
+  if (s.currency < cost) return "insufficient-funds";
+  return null;
+}
+
+/**
+ * Raise one upgrade path on a turret by a level. Preparation only. A turret
+ * may take both Speed and Strength. Rejections never deduct supplies.
+ */
+export function upgradeTurret(s: GameState, cfg: GameConfig, id: number, path: UpgradePathId): ManageResult {
+  const reason = checkUpgrade(s, cfg, id, path);
+  if (reason) return { ok: false, reason };
+  const st = structureById(s, id)!;
+  s.currency -= nextUpgradeCost(cfg, st, path)!;
+  st.turret[path]++;
+  return { ok: true };
+}
+
+/** Effective shots per second and damage per shot for a turret, after upgrades. */
+export function turretStats(cfg: GameConfig, t: Turret): { fireRate: number; damage: number } {
+  return {
+    fireRate: cfg.turret.fireRate * (1 + cfg.upgrades.speed.perLevel * t.speed),
+    damage: cfg.turret.damage * (1 + cfg.upgrades.strength.perLevel * t.strength),
+  };
+}
+
+/**
+ * Recycle (destroy) a structure: it is removed and its tile freed. There is
+ * no refund. Preparation only.
+ */
+export function recycleStructure(s: GameState, _cfg: GameConfig, id: number): ManageResult {
+  if (s.phase === "lost") return { ok: false, reason: "run-over" };
+  if (s.phase === "wave") return { ok: false, reason: "assault-active" };
+  const i = s.structures.findIndex((st) => st.id === id);
+  if (i === -1) return { ok: false, reason: "no-such-structure" };
+  s.structures.splice(i, 1);
+  return { ok: true };
 }
 
 /** Early launch: skip the rest of the preparation countdown and start the assault immediately. */
@@ -239,14 +325,23 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
   return best;
 }
 
-/** Apply damage; returns true if this hit killed the enemy. */
+/** Roll a kill's random, type-weighted Supplies drop from the seeded RNG. */
+export function rollDrop(s: GameState, cfg: GameConfig, type: EnemyType): number {
+  const d = cfg.enemies[type].drop;
+  if (nextRandom(s) >= d.chance) return 0;
+  return d.min + Math.floor(nextRandom(s) * (d.max - d.min + 1));
+}
+
+/** Apply damage; returns true if this hit killed the enemy. A kill pays out exactly once. */
 export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: number): boolean {
   if (e.hp <= 0) return false;
   e.hp -= amount;
   if (e.hp <= 0) {
     e.hp = 0;
     s.kills++;
-    s.currency += cfg.walker.reward;
+    const drop = rollDrop(s, cfg, e.type);
+    s.currency += drop;
+    s.earned += drop;
     return true;
   }
   return false;
@@ -285,7 +380,16 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     while (s.nextSpawn < s.spawns.length && s.spawns[s.nextSpawn]!.at <= s.waveTime) {
       const sp = s.spawns[s.nextSpawn++]!;
       if (s.enemies.length >= cfg.limits.maxEnemies) continue;
-      s.enemies.push({ id: s.nextEnemyId++, x: sp.x, y: sp.y, hp: cfg.walker.maxHp, attackCooldown: 0, attacking: false });
+      s.enemies.push({
+        id: s.nextEnemyId++,
+        type: sp.type,
+        maxHp: sp.hp,
+        x: sp.x,
+        y: sp.y,
+        hp: sp.hp,
+        attackCooldown: 0,
+        attacking: false,
+      });
       s.spawned++;
     }
   }
@@ -316,9 +420,9 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
 }
 
 function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
-  const w = cfg.walker;
   for (const e of s.enemies) {
     if (e.hp <= 0) continue;
+    const w = cfg.enemies[e.type];
     const gap = distanceToStronghold(s, e.x, e.y) - w.radius;
     if (gap > 0) {
       e.attacking = false;
@@ -342,9 +446,10 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
 
 function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
   const t = cfg.turret;
-  const interval = 1 / t.fireRate;
   for (const slot of s.structures) {
     const tur = slot.turret;
+    const stats = turretStats(cfg, tur);
+    const interval = 1 / stats.fireRate;
     tur.cooldown -= dt;
     const target = pickTarget(s, cfg, slot);
     tur.targetId = target ? target.id : null;
@@ -363,7 +468,7 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
         y: slot.y + sin * t.radius,
         vx: cos * t.projectileSpeed,
         vy: sin * t.projectileSpeed,
-        damage: t.damage,
+        damage: stats.damage,
         life: cfg.projectile.maxLifetime,
       });
       s.shotsFired++;
@@ -372,8 +477,6 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
 }
 
 function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {
-  const hitR = cfg.walker.radius + cfg.projectile.radius;
-  const hitR2 = hitR * hitR;
   const { width: w, height: h } = cfg.world;
   const kept: Projectile[] = [];
   for (const p of s.projectiles) {
@@ -386,7 +489,8 @@ function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {
       if (e.hp <= 0) continue;
       const dx = e.x - p.x;
       const dy = e.y - p.y;
-      if (dx * dx + dy * dy <= hitR2) {
+      const hitR = cfg.enemies[e.type].radius + cfg.projectile.radius;
+      if (dx * dx + dy * dy <= hitR * hitR) {
         damageEnemy(s, cfg, e, p.damage);
         hit = true;
         break;

@@ -12,9 +12,19 @@ import { bindVisibility, createLoop } from "../../engine/loop/loop.js";
 import { createRenderer } from "../../engine/render/render.js";
 import { baseConfig, stressConfig } from "./config.js";
 import { tileAt, tileStatus } from "./grid.js";
-import { buildTurret, createState, startWaveNow, step, type GameState } from "./sim.js";
+import {
+  buildTurret,
+  createState,
+  recycleStructure,
+  startWaveNow,
+  step,
+  structureAt,
+  upgradeTurret,
+  type GameState,
+  type UpgradePathId,
+} from "./sim.js";
 import { createStressRun } from "./stress.js";
-import { BUILD_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
+import { BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
 
 const params = new URLSearchParams(location.search);
 const stress = params.has("stress");
@@ -31,7 +41,7 @@ const renderer = createRenderer(canvas, {
 });
 
 let state: GameState = newRun();
-const view: ViewState = { toast: null, selected: null };
+const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0 };
 let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
@@ -41,6 +51,18 @@ function newRun(): GameState {
 
 function toast(text: string): void {
   view.toast = { text, until: state.time + 1.6 };
+}
+
+function selectedStructure() {
+  const sel = view.selected;
+  return sel ? structureAt(state, sel.col, sel.row) : null;
+}
+
+function upgrade(path: UpgradePathId): void {
+  const st = selectedStructure();
+  if (!st) return;
+  const res = upgradeTurret(state, cfg, st.id, path);
+  if (!res.ok) toast(MANAGE_MESSAGES[res.reason]);
 }
 
 const regions = uiRegions(cfg, () => state, () => view, {
@@ -55,11 +77,28 @@ const regions = uiRegions(cfg, () => state, () => view, {
   },
   cancelSelection: () => {
     view.selected = null;
+    view.recycleArmedUntil = 0;
+  },
+  upgradeSpeed: () => upgrade("speed"),
+  upgradeStrength: () => upgrade("strength"),
+  recycle: () => {
+    const st = selectedStructure();
+    if (!st) return;
+    // Destructive and unrefunded: require a second tap within 3 seconds.
+    if (view.recycleArmedUntil <= state.time) {
+      view.recycleArmedUntil = state.time + 3;
+      return;
+    }
+    view.recycleArmedUntil = 0;
+    const res = recycleStructure(state, cfg, st.id);
+    if (res.ok) view.selected = null;
+    else toast(MANAGE_MESSAGES[res.reason]);
   },
   restart: () => {
     state = newRun();
     view.toast = null;
     view.selected = null;
+    view.recycleArmedUntil = 0;
   },
   toggleDiagnostics: () => {
     showDiag = !showDiag;
@@ -72,7 +111,8 @@ bindTaps(canvas, renderer.toWorld, (p) => {
     const tile = tileAt(cfg, wp.x, wp.y);
     const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
     if (state.phase === "wave") {
-      if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
+      if (tile && structureAt(state, tile.col, tile.row)) toast(MANAGE_MESSAGES["assault-active"]);
+      else if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
       return;
     }
     if (state.phase === "lost") return;
@@ -80,6 +120,7 @@ bindTaps(canvas, renderer.toWorld, (p) => {
       view.selected = null;
       return;
     }
+    if (view.selected?.col !== tile.col || view.selected?.row !== tile.row) view.recycleArmedUntil = 0;
     view.selected = tile;
   });
 });

@@ -8,7 +8,7 @@ This repo is separate from the live `legitloot.site` code on purpose: nothing he
 
 The smallest playable proof, fully offline:
 
-- One arena, one stronghold, two fixed turret mounts (Zone A).
+- One arena and one stronghold inside an irregular property fence. Turrets go on any buildable tile inside the fence (80-unit tiles, about 46 px on a phone). Tap a tile to select it, then press Build; occupied tiles, rocks, the stronghold and anything outside the fence are refused by the simulation, never charged.
 - One turret type (machine gun) and one enemy type (Walker) arriving from all four edges.
 - Preparation countdown → warning → assault, repeating wave after wave until the stronghold falls ("Overrun" → play again). "Start wave now" skips the rest of preparation and starts the assault immediately. Turrets can only be built outside assaults. Every wave is currently the same size; wave scaling is an open decision.
 - One run currency (label "Supplies" is a placeholder name). Invalid builds never deduct it.

@@ -12,8 +12,17 @@ export interface GameConfig {
   /** Label shown for the run currency. The final name is an open decision. */
   currencyLabel: string;
   stronghold: { x: number; y: number; halfSize: number; maxHp: number };
-  /** Fixed turret mounts on the stronghold (Zone A), as offsets from its centre. */
-  hardpoints: { id: string; dx: number; dy: number }[];
+  /**
+   * Construction area. Tiles are square and sized for touch: 80 world units is
+   * about 46 CSS px on a 412 px-wide phone (44 px is the minimum touch target).
+   */
+  construction: {
+    tileSize: number;
+    /** Property boundary, world units, in order. A tile is inside when its centre is. */
+    perimeter: [number, number][];
+    /** Tiles inside the boundary that cannot be built on (placeholder terrain), as [col, row]. */
+    invalidTerrain: [number, number][];
+  };
   economy: { startCurrency: number };
   turret: {
     cost: number;
@@ -49,10 +58,17 @@ export const baseConfig: GameConfig = {
   world: { width: 720, height: 1280 },
   currencyLabel: "Supplies",
   stronghold: { x: 360, y: 660, halfSize: 52, maxHp: 400 },
-  hardpoints: [
-    { id: "west", dx: -88, dy: 0 },
-    { id: "east", dx: 88, dy: 0 },
-  ],
+  construction: {
+    tileSize: 80,
+    perimeter: [
+      [120, 330], [400, 300], [610, 360], [640, 560], [600, 720], [650, 900],
+      [560, 1030], [330, 1060], [130, 990], [90, 780], [140, 600], [80, 450],
+    ],
+    invalidTerrain: [
+      [2, 5],
+      [6, 11],
+    ],
+  },
   economy: { startCurrency: 100 },
   turret: { cost: 50, range: 300, fireRate: 5, damage: 4, projectileSpeed: 720, radius: 22 },
   walker: { maxHp: 26, speed: 30, radius: 14, structureDamage: 8, attackCooldown: 1, reward: 6 },

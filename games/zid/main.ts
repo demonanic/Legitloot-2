@@ -11,9 +11,10 @@ import { bindTaps, routeTap } from "../../engine/input/input.js";
 import { bindVisibility, createLoop } from "../../engine/loop/loop.js";
 import { createRenderer } from "../../engine/render/render.js";
 import { baseConfig, stressConfig } from "./config.js";
-import { buildTurret, createState, slotAt, startWaveNow, step, type BuildResult, type GameState } from "./sim.js";
+import { tileAt, tileStatus } from "./grid.js";
+import { buildTurret, createState, startWaveNow, step, type GameState } from "./sim.js";
 import { createStressRun } from "./stress.js";
-import { draw, uiRegions, type ViewState } from "./view.js";
+import { BUILD_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
 
 const params = new URLSearchParams(location.search);
 const stress = params.has("stress");
@@ -30,7 +31,7 @@ const renderer = createRenderer(canvas, {
 });
 
 let state: GameState = newRun();
-const view: ViewState = { toast: null };
+const view: ViewState = { toast: null, selected: null };
 let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
@@ -38,19 +39,27 @@ function newRun(): GameState {
   return stress ? createStressRun(cfg, seed) : createState(cfg, seed);
 }
 
-const REASONS: Record<Exclude<BuildResult, { ok: true }>["reason"], string> = {
-  "insufficient-funds": `Not enough ${cfg.currencyLabel.toLowerCase()}`,
-  occupied: "That mount already has a turret",
-  "no-such-slot": "Nothing to build there",
-  "run-over": "The run is over",
-  "assault-active": "Build between waves",
-};
+function toast(text: string): void {
+  view.toast = { text, until: state.time + 1.6 };
+}
 
-const regions = uiRegions(cfg, () => state, {
+const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
+  confirmBuild: () => {
+    const sel = view.selected;
+    if (!sel) return;
+    // The simulation validates again; the panel's state is only a preview.
+    const res = buildTurret(state, cfg, sel.col, sel.row);
+    if (res.ok) view.selected = null;
+    else toast(BUILD_MESSAGES[res.reason]);
+  },
+  cancelSelection: () => {
+    view.selected = null;
+  },
   restart: () => {
     state = newRun();
     view.toast = null;
+    view.selected = null;
   },
   toggleDiagnostics: () => {
     showDiag = !showDiag;
@@ -59,16 +68,28 @@ const regions = uiRegions(cfg, () => state, {
 
 bindTaps(canvas, renderer.toWorld, (p) => {
   routeTap(p, regions, (wp) => {
-    const slot = slotAt(state, wp.x, wp.y, cfg.turret.radius + 26);
-    if (!slot) return;
-    const res = buildTurret(state, cfg, slot.id);
-    if (!res.ok) view.toast = { text: REASONS[res.reason], until: state.time + 1.6 };
+    // World tap: choose a tile. Building happens only after "Build" is pressed.
+    const tile = tileAt(cfg, wp.x, wp.y);
+    const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
+    if (state.phase === "wave") {
+      if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
+      return;
+    }
+    if (state.phase === "lost") return;
+    if (!tile || status === "out-of-bounds" || status === "outside-perimeter") {
+      view.selected = null;
+      return;
+    }
+    view.selected = tile;
   });
 });
 
 const loop = createLoop({
   stepHz: 30,
-  update: (dt) => step(state, cfg, dt),
+  update: (dt) => {
+    step(state, cfg, dt);
+    if (state.phase === "wave" || state.phase === "lost") view.selected = null;
+  },
   render: () => {
     renderer.beginFrame();
     draw(renderer.ctx, state, cfg, view, showDiag);

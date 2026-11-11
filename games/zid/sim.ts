@@ -6,6 +6,7 @@
  */
 
 import type { Edge, GameConfig } from "./config.js";
+import { tileCenter, tileStatus, type TileStatus } from "./grid.js";
 
 /** The run is endless: prep -> warning -> wave repeats until the stronghold falls ("lost"). */
 export type Phase = "prep" | "warning" | "wave" | "lost";
@@ -17,11 +18,18 @@ export interface Turret {
   targetId: number | null;
 }
 
-export interface Slot {
-  id: string;
+export type StructureKind = "machine-gun";
+
+/** Anything built on a construction tile. */
+export interface Structure {
+  id: number;
+  kind: StructureKind;
+  col: number;
+  row: number;
+  /** Tile centre, world units. */
   x: number;
   y: number;
-  turret: Turret | null;
+  turret: Turret;
 }
 
 export interface Enemy {
@@ -64,7 +72,8 @@ export interface GameState {
   time: number;
   currency: number;
   stronghold: { x: number; y: number; halfSize: number; hp: number; maxHp: number };
-  slots: Slot[];
+  structures: Structure[];
+  nextStructureId: number;
   enemies: Enemy[];
   projectiles: Projectile[];
   spawns: Spawn[];
@@ -114,7 +123,8 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     time: 0,
     currency: cfg.economy.startCurrency,
     stronghold: { x: sh.x, y: sh.y, halfSize: sh.halfSize, hp: sh.maxHp, maxHp: sh.maxHp },
-    slots: cfg.hardpoints.map((h) => ({ id: h.id, x: sh.x + h.dx, y: sh.y + h.dy, turret: null })),
+    structures: [],
+    nextStructureId: 1,
     enemies: [],
     projectiles: [],
     spawns: [],
@@ -148,25 +158,56 @@ function rollWave(s: GameState, cfg: GameConfig): void {
   s.spawns.sort((a, b) => a.at - b.at);
 }
 
-export type BuildResult =
-  | { ok: true }
-  | { ok: false; reason: "run-over" | "assault-active" | "no-such-slot" | "occupied" | "insufficient-funds" };
+export type BuildRejection =
+  | "run-over"
+  | "assault-active"
+  | Exclude<TileStatus, "buildable">
+  | "occupied"
+  | "insufficient-funds";
+
+export type BuildResult = { ok: true; structure: Structure } | { ok: false; reason: BuildRejection };
+
+/** The structure on a tile, if any. */
+export function structureAt(s: GameState, col: number, row: number): Structure | null {
+  return s.structures.find((st) => st.col === col && st.row === row) ?? null;
+}
 
 /**
- * Build a turret on a hardpoint. Validation happens before any state change;
- * a rejected build never deducts currency. Turret construction is a
+ * Why a machine-gun turret could not be built on a tile right now, or null if
+ * it can. Pure: never changes state. The UI uses this for previews; the
+ * simulation uses it to validate.
+ */
+export function checkBuild(s: GameState, cfg: GameConfig, col: number, row: number): BuildRejection | null {
+  if (s.phase === "lost") return "run-over";
+  if (s.phase === "wave") return "assault-active";
+  const status = tileStatus(cfg, col, row);
+  if (status !== "buildable") return status;
+  if (structureAt(s, col, row)) return "occupied";
+  if (s.currency < cfg.turret.cost) return "insufficient-funds";
+  return null;
+}
+
+/**
+ * Build a machine-gun turret on a construction tile. Validation happens before
+ * any state change; a rejected build never deducts currency. Construction is a
  * preparation action: it is refused while an assault is active.
  */
-export function buildTurret(s: GameState, cfg: GameConfig, slotId: string): BuildResult {
-  if (s.phase === "lost") return { ok: false, reason: "run-over" };
-  if (s.phase === "wave") return { ok: false, reason: "assault-active" };
-  const slot = s.slots.find((sl) => sl.id === slotId);
-  if (!slot) return { ok: false, reason: "no-such-slot" };
-  if (slot.turret) return { ok: false, reason: "occupied" };
-  if (s.currency < cfg.turret.cost) return { ok: false, reason: "insufficient-funds" };
+export function buildTurret(s: GameState, cfg: GameConfig, col: number, row: number): BuildResult {
+  const reason = checkBuild(s, cfg, col, row);
+  if (reason) return { ok: false, reason };
   s.currency -= cfg.turret.cost;
-  slot.turret = { cooldown: 0, aim: -Math.PI / 2, targetId: null };
-  return { ok: true };
+  const c = tileCenter(cfg, col, row);
+  const structure: Structure = {
+    id: s.nextStructureId++,
+    kind: "machine-gun",
+    col,
+    row,
+    x: c.x,
+    y: c.y,
+    turret: { cooldown: 0, aim: -Math.PI / 2, targetId: null },
+  };
+  s.structures.push(structure);
+  return { ok: true, structure };
 }
 
 /** Early launch: skip the rest of the preparation countdown and start the assault immediately. */
@@ -176,32 +217,18 @@ export function startWaveNow(s: GameState, _cfg: GameConfig): void {
   s.phaseTimer = 0;
 }
 
-/** Slot whose mount is within `radius` of a world point, if any. */
-export function slotAt(s: GameState, x: number, y: number, radius: number): Slot | null {
-  let best: Slot | null = null;
-  let bestD = radius;
-  for (const sl of s.slots) {
-    const d = Math.hypot(sl.x - x, sl.y - y);
-    if (d <= bestD) {
-      best = sl;
-      bestD = d;
-    }
-  }
-  return best;
-}
-
 /**
  * Targeting rule (one simple default): the enemy in range that is closest to
  * the stronghold. Ties go to the lowest id, so the choice is deterministic.
  */
-export function pickTarget(s: GameState, cfg: GameConfig, slot: Slot): Enemy | null {
+export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: number }): Enemy | null {
   let best: Enemy | null = null;
   let bestD = Infinity;
   const r2 = cfg.turret.range * cfg.turret.range;
   for (const e of s.enemies) {
     if (e.hp <= 0) continue;
-    const dx = e.x - slot.x;
-    const dy = e.y - slot.y;
+    const dx = e.x - from.x;
+    const dy = e.y - from.y;
     if (dx * dx + dy * dy > r2) continue;
     const d = Math.hypot(e.x - s.stronghold.x, e.y - s.stronghold.y);
     if (d < bestD || (d === bestD && best && e.id < best.id)) {
@@ -316,9 +343,8 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
 function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
   const t = cfg.turret;
   const interval = 1 / t.fireRate;
-  for (const slot of s.slots) {
+  for (const slot of s.structures) {
     const tur = slot.turret;
-    if (!tur) continue;
     tur.cooldown -= dt;
     const target = pickTarget(s, cfg, slot);
     tur.targetId = target ? target.id : null;

@@ -5,7 +5,8 @@
 
 import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
-import { remainingEnemies, type GameState } from "./sim.js";
+import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
+import { checkBuild, remainingEnemies, structureAt, type BuildRejection, type GameState } from "./sim.js";
 
 const C = {
   ground: "#1c1e1b",
@@ -13,6 +14,11 @@ const C = {
   stronghold: "#585d55",
   strongholdEdge: "#8b9086",
   slotEmpty: "#8b9086",
+  perimeter: "#c9b98a",
+  buildable: "rgba(241,238,227,0.06)",
+  buildableEdge: "rgba(241,238,227,0.16)",
+  rock: "#3a3d38",
+  rockEdge: "#5b5f57",
   turret: "#a9b0a5",
   barrel: "#d7dcd3",
   walker: "#6e7b5b",
@@ -36,10 +42,25 @@ export interface Toast {
 
 export interface ViewState {
   toast: Toast | null;
+  /** Tile chosen for construction, awaiting confirmation. UI state only. */
+  selected: Tile | null;
 }
+
+/** Player-facing text for each build rejection. */
+export const BUILD_MESSAGES: Record<BuildRejection, string> = {
+  "run-over": "The run is over",
+  "assault-active": "Build between waves",
+  "out-of-bounds": "Nothing to build there",
+  "outside-perimeter": "Build inside the fence",
+  "invalid-terrain": "Can't build on that ground",
+  occupied: "That tile is taken",
+  "insufficient-funds": "Not enough supplies",
+};
 
 export interface UiActions {
   startNow(): void;
+  confirmBuild(): void;
+  cancelSelection(): void;
   restart(): void;
   toggleDiagnostics(): void;
 }
@@ -50,16 +71,21 @@ export function buttonRects(cfg: GameConfig) {
   const h = cfg.world.height;
   return {
     startNow: { x: w / 2 - 150, y: h - 132, w: 300, h: 76 },
+    build: { x: 40, y: h - 132, w: 400, h: 76 },
+    cancel: { x: 460, y: h - 132, w: 220, h: 76 },
     restart: { x: w / 2 - 150, y: h / 2 + 150, w: 300, h: 84 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
   };
 }
 
-export function uiRegions(cfg: GameConfig, getState: () => GameState, act: UiActions): UiRegion[] {
+export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: () => ViewState, act: UiActions): UiRegion[] {
   const r = buttonRects(cfg);
   const over = () => getState().phase === "lost";
+  const selecting = () => getView().selected !== null && !over();
   return [
-    rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep"),
+    rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
+    rectRegion("build", r.build, () => act.confirmBuild(), selecting),
+    rectRegion("cancel", r.cancel, () => act.cancelSelection(), selecting),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
     // While the end screen is up it blocks all world taps; only its button acts.
     rectRegion("end-screen", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, over),
@@ -77,11 +103,21 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-function button(ctx: CanvasRenderingContext2D, rect: { x: number; y: number; w: number; h: number }, label: string): void {
-  ctx.fillStyle = C.button;
+function button(
+  ctx: CanvasRenderingContext2D,
+  rect: { x: number; y: number; w: number; h: number },
+  label: string,
+  style: "primary" | "secondary" | "disabled" = "primary",
+): void {
+  ctx.fillStyle = style === "primary" ? C.button : style === "disabled" ? "#4a4d47" : "#2a2c29";
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 10);
   ctx.fill();
-  ctx.fillStyle = C.buttonText;
+  if (style === "secondary") {
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+  ctx.fillStyle = style === "primary" ? C.buttonText : style === "disabled" ? "#9a9e96" : C.text;
   ctx.font = "800 30px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -107,27 +143,95 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   // Ground and grid.
   ctx.fillStyle = C.ground;
   ctx.fillRect(0, 0, W, H);
+  const T = cfg.construction.tileSize;
+  const { cols, rows } = gridSize(cfg);
   ctx.strokeStyle = C.grid;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = 0; x <= W; x += 40) {
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, H);
+  for (let c = 0; c <= cols; c++) {
+    ctx.moveTo(c * T, 0);
+    ctx.lineTo(c * T, H);
   }
-  for (let y = 0; y <= H; y += 40) {
-    ctx.moveTo(0, y);
-    ctx.lineTo(W, y);
+  for (let r = 0; r <= rows; r++) {
+    ctx.moveTo(0, r * T);
+    ctx.lineTo(W, r * T);
   }
   ctx.stroke();
 
-  // Turret range rings, faint, so placement reads.
+  // Buildable tiles, shown while building is allowed.
+  const building = s.phase === "prep" || s.phase === "warning";
+  if (building) {
+    for (const t of buildableTiles(cfg)) {
+      if (structureAt(s, t.col, t.row)) continue;
+      ctx.fillStyle = C.buildable;
+      ctx.fillRect(t.col * T + 3, t.row * T + 3, T - 6, T - 6);
+      ctx.strokeStyle = C.buildableEdge;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(t.col * T + 3, t.row * T + 3, T - 6, T - 6);
+    }
+  }
+
+  // Invalid terrain (placeholder rocks).
+  for (const [col, row] of cfg.construction.invalidTerrain) {
+    const c = tileCenter(cfg, col, row);
+    ctx.fillStyle = C.rock;
+    ctx.strokeStyle = C.rockEdge;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(c.x - 26, c.y + 18);
+    ctx.lineTo(c.x - 18, c.y - 14);
+    ctx.lineTo(c.x + 4, c.y - 24);
+    ctx.lineTo(c.x + 26, c.y - 6);
+    ctx.lineTo(c.x + 22, c.y + 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Property boundary.
+  const per = cfg.construction.perimeter;
+  ctx.strokeStyle = C.perimeter;
+  ctx.lineWidth = 4;
+  ctx.setLineDash([18, 10]);
+  ctx.beginPath();
+  per.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
+  ctx.closePath();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Turret range rings, faint, so coverage reads.
   ctx.strokeStyle = "rgba(233,214,141,0.08)";
   ctx.lineWidth = 2;
-  for (const sl of s.slots) {
-    if (!sl.turret) continue;
+  for (const st of s.structures) {
     ctx.beginPath();
-    ctx.arc(sl.x, sl.y, cfg.turret.range, 0, Math.PI * 2);
+    ctx.arc(st.x, st.y, cfg.turret.range, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  // Selected tile and a preview of what would be built.
+  const sel = view.selected;
+  const selReason = sel ? checkBuild(s, cfg, sel.col, sel.row) : null;
+  if (sel && s.phase !== "lost") {
+    const c = tileCenter(cfg, sel.col, sel.row);
+    const ok = selReason === null;
+    ctx.strokeStyle = ok ? C.good : C.warn;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(sel.col * T + 2, sel.row * T + 2, T - 4, T - 4);
+    if (ok) {
+      ctx.strokeStyle = "rgba(143,192,107,0.45)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 8]);
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, cfg.turret.range, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = C.turret;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, cfg.turret.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 
   // Stronghold.
@@ -139,23 +243,9 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.strokeRect(sh.x - sh.halfSize, sh.y - sh.halfSize, sh.halfSize * 2, sh.halfSize * 2);
   bar(ctx, sh.x - 70, sh.y - sh.halfSize - 26, 140, 12, sh.hp / sh.maxHp, sh.hp / sh.maxHp > 0.35 ? C.good : C.bad);
 
-  // Hardpoints and turrets.
-  const canAfford = s.currency >= cfg.turret.cost;
-  for (const sl of s.slots) {
-    if (!sl.turret) {
-      ctx.setLineDash([6, 6]);
-      ctx.strokeStyle = canAfford ? C.text : C.slotEmpty;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(sl.x, sl.y, cfg.turret.radius + 6, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle = canAfford ? C.text : C.quiet;
-      ctx.font = "700 20px system-ui, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(`+${cfg.turret.cost}`, sl.x, sl.y + 1);
-    } else {
+  // Turrets.
+  for (const sl of s.structures) {
+    {
       ctx.fillStyle = C.turret;
       ctx.beginPath();
       ctx.arc(sl.x, sl.y, cfg.turret.radius, 0, Math.PI * 2);
@@ -235,14 +325,17 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText("INCOMING", W / 2, 300);
   }
 
-  // Prep prompt and skip button.
-  if (s.phase === "prep") {
+  // Construction panel, or the prompt and skip button.
+  if (sel && s.phase !== "lost") {
+    ctx.fillStyle = selReason ? C.warn : C.text;
+    ctx.font = "700 24px system-ui, sans-serif";
+    ctx.fillText(selReason ? BUILD_MESSAGES[selReason] : `Machine-gun turret · range ${cfg.turret.range}`, W / 2, r.build.y - 40);
+    button(ctx, r.build, `Build turret · ${cfg.turret.cost}`, selReason ? "disabled" : "primary");
+    button(ctx, r.cancel, "Cancel", "secondary");
+  } else if (s.phase === "prep") {
     ctx.fillStyle = C.text;
     ctx.font = "700 24px system-ui, sans-serif";
-    const prompt = s.slots.some((sl) => !sl.turret)
-      ? `Tap a + mount to build a turret (${cfg.turret.cost})`
-      : "Defenses ready";
-    ctx.fillText(prompt, W / 2, r.startNow.y - 40);
+    ctx.fillText(`Tap a tile inside the fence to place a turret (${cfg.turret.cost})`, W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
   }
 

@@ -7,7 +7,8 @@
 
 import type { Edge, GameConfig } from "./config.js";
 
-export type Phase = "prep" | "warning" | "wave" | "won" | "lost";
+/** The run is endless: prep -> warning -> wave repeats until the stronghold falls ("lost"). */
+export type Phase = "prep" | "warning" | "wave" | "lost";
 
 export interface Turret {
   cooldown: number;
@@ -53,8 +54,12 @@ export interface GameState {
   phase: Phase;
   /** Seconds left in prep / warning. */
   phaseTimer: number;
-  /** Seconds since the wave started. */
+  /** Seconds since the current wave started. */
   waveTime: number;
+  /** Current wave number, starting at 1. */
+  wave: number;
+  /** Waves fully cleared this run. */
+  wavesCleared: number;
   /** Total simulated seconds. */
   time: number;
   currency: number;
@@ -104,6 +109,8 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     phase: cfg.wave.prepSeconds > 0 ? "prep" : cfg.wave.warningSeconds > 0 ? "warning" : "wave",
     phaseTimer: cfg.wave.prepSeconds > 0 ? cfg.wave.prepSeconds : cfg.wave.warningSeconds,
     waveTime: 0,
+    wave: 1,
+    wavesCleared: 0,
     time: 0,
     currency: cfg.economy.startCurrency,
     stronghold: { x: sh.x, y: sh.y, halfSize: sh.halfSize, hp: sh.maxHp, maxHp: sh.maxHp },
@@ -118,7 +125,18 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     shotsFired: 0,
     damageTaken: 0,
   };
-  // Pre-roll the whole spawn schedule so it is fixed by the seed.
+  rollWave(s, cfg);
+  return s;
+}
+
+/**
+ * Pre-roll one wave's spawn schedule so it is fixed by the seed.
+ * Every wave uses the same configured size: the wave scaling curve is an open decision.
+ */
+function rollWave(s: GameState, cfg: GameConfig): void {
+  s.spawns = [];
+  s.nextSpawn = 0;
+  s.waveTime = 0;
   const n = cfg.wave.count;
   const gap = n > 1 ? cfg.wave.spawnSeconds / n : 0;
   for (let i = 0; i < n; i++) {
@@ -128,19 +146,20 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     s.spawns.push({ at: Math.max(0, i * gap + jitter), x: p.x, y: p.y });
   }
   s.spawns.sort((a, b) => a.at - b.at);
-  return s;
 }
 
 export type BuildResult =
   | { ok: true }
-  | { ok: false; reason: "run-over" | "no-such-slot" | "occupied" | "insufficient-funds" };
+  | { ok: false; reason: "run-over" | "assault-active" | "no-such-slot" | "occupied" | "insufficient-funds" };
 
 /**
  * Build a turret on a hardpoint. Validation happens before any state change;
- * a rejected build never deducts currency.
+ * a rejected build never deducts currency. Turret construction is a
+ * preparation action: it is refused while an assault is active.
  */
 export function buildTurret(s: GameState, cfg: GameConfig, slotId: string): BuildResult {
-  if (s.phase === "won" || s.phase === "lost") return { ok: false, reason: "run-over" };
+  if (s.phase === "lost") return { ok: false, reason: "run-over" };
+  if (s.phase === "wave") return { ok: false, reason: "assault-active" };
   const slot = s.slots.find((sl) => sl.id === slotId);
   if (!slot) return { ok: false, reason: "no-such-slot" };
   if (slot.turret) return { ok: false, reason: "occupied" };
@@ -150,11 +169,11 @@ export function buildTurret(s: GameState, cfg: GameConfig, slotId: string): Buil
   return { ok: true };
 }
 
-/** Skip the rest of the preparation countdown. */
-export function startWaveNow(s: GameState, cfg: GameConfig): void {
+/** Early launch: skip the rest of the preparation countdown and start the assault immediately. */
+export function startWaveNow(s: GameState, _cfg: GameConfig): void {
   if (s.phase !== "prep") return;
-  s.phase = cfg.wave.warningSeconds > 0 ? "warning" : "wave";
-  s.phaseTimer = cfg.wave.warningSeconds;
+  s.phase = "wave";
+  s.phaseTimer = 0;
 }
 
 /** Slot whose mount is within `radius` of a world point, if any. */
@@ -216,7 +235,7 @@ function distanceToStronghold(s: GameState, x: number, y: number): number {
 
 export function step(s: GameState, cfg: GameConfig, dt: number): void {
   s.time += dt;
-  if (s.phase === "won" || s.phase === "lost") {
+  if (s.phase === "lost") {
     stepProjectiles(s, cfg, dt);
     return;
   }
@@ -255,7 +274,17 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.stronghold.hp = 0;
     s.phase = "lost";
   } else if (s.phase === "wave" && s.nextSpawn >= s.spawns.length && s.enemies.length === 0) {
-    s.phase = "won";
+    // Wave cleared: back to preparation for the next one.
+    s.wavesCleared++;
+    s.wave++;
+    rollWave(s, cfg);
+    if (cfg.wave.prepSeconds > 0) {
+      s.phase = "prep";
+      s.phaseTimer = cfg.wave.prepSeconds;
+    } else if (cfg.wave.warningSeconds > 0) {
+      s.phase = "warning";
+      s.phaseTimer = cfg.wave.warningSeconds;
+    }
   }
 }
 

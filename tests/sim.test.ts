@@ -22,7 +22,7 @@ function enemy(s: GameState, x: number, y: number, hp = baseConfig.walker.maxHp)
 }
 
 function runToEnd(s: GameState, cfg: GameConfig, onStep?: (s: GameState) => void, maxSeconds = 600): void {
-  for (let i = 0; i < maxSeconds * 30 && s.phase !== "won" && s.phase !== "lost"; i++) {
+  for (let i = 0; i < maxSeconds * 30 && s.phase !== "lost"; i++) {
     onStep?.(s);
     step(s, cfg, DT);
   }
@@ -111,7 +111,7 @@ test("targeting: nothing in range means no target", () => {
   assert.equal(pickTarget(s, baseConfig, s.slots[0]!), null);
 });
 
-test("phases: prep -> warning -> wave, and start-now skips prep", () => {
+test("phases: the countdown runs prep -> warning -> wave", () => {
   const s = createState(baseConfig, 1);
   assert.equal(s.phase, "prep");
   for (let i = 0; i < baseConfig.wave.prepSeconds * 30 + 2; i++) step(s, baseConfig, DT);
@@ -119,9 +119,60 @@ test("phases: prep -> warning -> wave, and start-now skips prep", () => {
   for (let i = 0; i < baseConfig.wave.warningSeconds * 30 + 2; i++) step(s, baseConfig, DT);
   assert.equal(s.phase, "wave");
 
-  const t = createState(baseConfig, 1);
-  startWaveNow(t, baseConfig);
-  assert.equal(t.phase, "warning");
+});
+
+test("early launch skips the rest of prep and starts the assault immediately", () => {
+  const s = createState(baseConfig, 1);
+  for (let i = 0; i < 90; i++) step(s, baseConfig, DT); // 3 s into prep
+  startWaveNow(s, baseConfig);
+  assert.equal(s.phase, "wave");
+  assert.equal(s.phaseTimer, 0);
+  assert.equal(s.waveTime, 0);
+  step(s, baseConfig, DT);
+  assert.equal(s.phase, "wave", "no warning phase after an early launch");
+  startWaveNow(s, baseConfig);
+  assert.equal(s.phase, "wave", "early launch does nothing outside prep");
+});
+
+test("turret construction is refused during an assault and deducts nothing", () => {
+  const s = createState(baseConfig, 1);
+  startWaveNow(s, baseConfig);
+  const c = s.currency;
+  assert.deepEqual(buildTurret(s, baseConfig, "west"), { ok: false, reason: "assault-active" });
+  assert.equal(s.currency, c);
+  assert.equal(s.slots.find((sl) => sl.id === "west")?.turret, null);
+});
+
+test("turret construction is allowed in prep and during the warning", () => {
+  const s = createState(baseConfig, 1);
+  assert.deepEqual(buildTurret(s, baseConfig, "west"), { ok: true });
+  for (let i = 0; i < baseConfig.wave.prepSeconds * 30 + 2; i++) step(s, baseConfig, DT);
+  assert.equal(s.phase, "warning");
+  s.currency = baseConfig.turret.cost;
+  assert.deepEqual(buildTurret(s, baseConfig, "east"), { ok: true });
+});
+
+test("clearing a wave returns to preparation and the loop continues", () => {
+  const s = createState(baseConfig, 4);
+  buildTurret(s, baseConfig, "west");
+  s.currency += baseConfig.turret.cost;
+  buildTurret(s, baseConfig, "east");
+  startWaveNow(s, baseConfig);
+  let guard = 0;
+  while (s.phase === "wave" && guard++ < 30 * 300) step(s, baseConfig, DT);
+  assert.equal(s.phase, "prep", "a cleared wave goes back to prep");
+  assert.equal(s.wave, 2);
+  assert.equal(s.wavesCleared, 1);
+  assert.equal(s.kills, baseConfig.wave.count);
+  assert.equal(s.phaseTimer, baseConfig.wave.prepSeconds);
+  assert.equal(s.spawns.length, baseConfig.wave.count, "the next wave is scheduled");
+  assert.equal(s.nextSpawn, 0);
+  const supplies = s.currency;
+  assert.ok(supplies > 0, "supplies earned in wave 1 carry into wave 2's prep");
+  // The countdown then launches wave 2 automatically.
+  for (let i = 0; i < (baseConfig.wave.prepSeconds + baseConfig.wave.warningSeconds) * 30 + 4; i++) step(s, baseConfig, DT);
+  assert.equal(s.phase, "wave");
+  assert.equal(s.wave, 2);
 });
 
 test("determinism: same seed and commands give identical state", () => {
@@ -156,13 +207,14 @@ test("balance: with no turrets the stronghold falls", () => {
   assert.equal(s.phase, "lost");
 });
 
-test("balance: building both mounts when affordable clears the wave on 20 seeds", () => {
+test("balance: both mounts built before the assault clear wave 1 on 20 seeds", () => {
   for (let seed = 1; seed <= 20; seed++) {
     const s = createState(baseConfig, seed);
-    runToEnd(s, baseConfig, (st) => {
-      for (const sl of st.slots) if (!sl.turret) buildTurret(st, baseConfig, sl.id);
-    });
-    assert.equal(s.phase, "won", `seed ${seed} should be winnable`);
+    buildTurret(s, baseConfig, "west");
+    s.currency += baseConfig.turret.cost; // second mount, as if earned
+    buildTurret(s, baseConfig, "east");
+    for (let i = 0; i < 30 * 300 && s.wavesCleared === 0 && s.phase !== "lost"; i++) step(s, baseConfig, DT);
+    assert.equal(s.wavesCleared, 1, `seed ${seed} should clear wave 1`);
     assert.equal(s.kills, baseConfig.wave.count);
   }
 });
@@ -172,7 +224,7 @@ test("balance: a single turret is not enough (the second mount matters)", () => 
   for (let seed = 1; seed <= 10; seed++) {
     const s = createState(baseConfig, seed);
     buildTurret(s, baseConfig, "west");
-    runToEnd(s, baseConfig);
+    for (let i = 0; i < 30 * 300 && s.wavesCleared === 0 && s.phase !== "lost"; i++) step(s, baseConfig, DT);
     if (s.phase === "lost") lost++;
   }
   assert.ok(lost >= 8, `one turret lost only ${lost}/10`);

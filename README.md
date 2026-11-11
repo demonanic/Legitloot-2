@@ -10,7 +10,7 @@ The smallest playable proof, fully offline:
 
 - One arena, one stronghold, two fixed turret mounts (Zone A).
 - One turret type (machine gun) and one enemy type (Walker) arriving from all four edges.
-- Preparation countdown → warning → one wave → "Wave cleared" or "Overrun" → play again.
+- Preparation countdown → warning → assault, repeating wave after wave until the stronghold falls ("Overrun" → play again). "Start wave now" skips the rest of preparation and starts the assault immediately. Turrets can only be built outside assaults. Every wave is currently the same size; wave scaling is an open decision.
 - One run currency (label "Supplies" is a placeholder name). Invalid builds never deduct it.
 - Fixed 30 Hz simulation, rendering up to 60 FPS, pauses when the tab is hidden.
 - On-screen diagnostics (tap **FPS**).

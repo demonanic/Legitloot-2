@@ -57,10 +57,7 @@ export function buttonRects(cfg: GameConfig) {
 
 export function uiRegions(cfg: GameConfig, getState: () => GameState, act: UiActions): UiRegion[] {
   const r = buttonRects(cfg);
-  const over = () => {
-    const p = getState().phase;
-    return p === "won" || p === "lost";
-  };
+  const over = () => getState().phase === "lost";
   return [
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep"),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
@@ -208,12 +205,11 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.textAlign = "center";
   let status = "";
   let color = C.text;
-  if (s.phase === "prep") status = `Prepare ${clock(s.phaseTimer)}`;
+  if (s.phase === "prep") status = `Wave ${s.wave} in ${clock(s.phaseTimer)}`;
   else if (s.phase === "warning") {
     status = "Horde incoming";
     color = C.warn;
-  } else if (s.phase === "wave") status = `Wave 1 · ${remainingEnemies(s)} left`;
-  else if (s.phase === "won") status = "Wave cleared";
+  } else if (s.phase === "wave") status = `Wave ${s.wave} · ${remainingEnemies(s)} left`;
   else status = "Stronghold destroyed";
   ctx.fillStyle = color;
   ctx.font = "800 28px system-ui, sans-serif";
@@ -261,17 +257,17 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   // End screen.
-  if (s.phase === "won" || s.phase === "lost") {
+  if (s.phase === "lost") {
     ctx.fillStyle = "rgba(8,9,8,0.78)";
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = s.phase === "won" ? C.good : C.bad;
+    ctx.fillStyle = C.bad;
     ctx.font = "900 72px system-ui, sans-serif";
-    ctx.fillText(s.phase === "won" ? "WAVE CLEARED" : "OVERRUN", W / 2, H / 2 - 120);
+    ctx.fillText("OVERRUN", W / 2, H / 2 - 120);
     ctx.fillStyle = C.text;
     ctx.font = "600 28px system-ui, sans-serif";
-    ctx.fillText(`Kills ${s.kills} of ${s.spawns.length}`, W / 2, H / 2 - 30);
-    ctx.fillText(`Stronghold ${Math.round((s.stronghold.hp / s.stronghold.maxHp) * 100)}%`, W / 2, H / 2 + 14);
-    ctx.fillText(`Time ${clock(s.waveTime)}`, W / 2, H / 2 + 58);
+    ctx.fillText(`Waves cleared ${s.wavesCleared}`, W / 2, H / 2 - 30);
+    ctx.fillText(`Kills ${s.kills}`, W / 2, H / 2 + 14);
+    ctx.fillText(`Time ${clock(s.time)}`, W / 2, H / 2 + 58);
     button(ctx, r.restart, "Play again");
   }
 }

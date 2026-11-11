@@ -46,6 +46,7 @@ const REASONS: Record<Exclude<BuildResult, { ok: true }>["reason"], string> = {
   occupied: "That mount already has a turret",
   "no-such-slot": "Nothing to build there",
   "run-over": "The run is over",
+  "assault-active": "Build between waves",
 };
 
 const regions = uiRegions(cfg, () => state, {

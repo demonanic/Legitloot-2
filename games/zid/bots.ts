@@ -28,9 +28,15 @@ import {
   isTrap,
   upgradeBase,
   nextBaseUpgradeCost,
+  collectPickup,
+  activateBoost,
 } from "./sim.js";
 
-export type Player = (s: GameState, cfg: GameConfig) => void;
+export interface Player {
+  (s: GameState, cfg: GameConfig): void;
+  /** Optional: called every step of an assault (collect pickups, fire boosts). */
+  during?: (s: GameState, cfg: GameConfig) => void;
+}
 
 /** Buildable tiles nearest the stronghold first. */
 function tilesByDistance(cfg: GameConfig): Tile[] {
@@ -92,6 +98,7 @@ export const sensiblePlayer: Player = (s, cfg) => {
   const cost = nextBaseUpgradeCost(s, cfg);
   if (
     cost !== null &&
+    s.wave >= 4 &&
     Object.values(cfg.unlocks).includes(nextLevel) &&
     s.structures.filter((st) => st.turret).length >= want &&
     s.currency >= cost + 60
@@ -157,13 +164,28 @@ export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave =
   while (s.phase !== "lost" && s.wave <= maxWave) {
     player(s, cfg);
     const wave = s.wave;
-    const hp0 = s.stronghold.hp;
+    const hit0 = s.damageTaken;
     const supplies = s.currency;
     const intact0 = s.structures.filter((st) => !st.destroyed).length;
     startWaveNow(s, cfg);
-    for (let i = 0; s.phase === "wave" && i < 30 * 600; i++) step(s, cfg, 1 / 30);
+    for (let i = 0; s.phase === "wave" && i < 30 * 600; i++) {
+      step(s, cfg, 1 / 30);
+      player.during?.(s, cfg);
+    }
     const wrecked = Math.max(0, intact0 - s.structures.filter((st) => !st.destroyed).length);
-    perWave.push({ wave, supplies, damage: hp0 - s.stronghold.hp, wrecked });
+    perWave.push({ wave, supplies, damage: s.damageTaken - hit0, wrecked });
   }
   return { defeatWave: s.phase === "lost" ? s.wave : null, perWave, earned: s.earned };
 }
+
+/**
+ * What an attentive player does mid-assault: grabs each pickup a couple of
+ * seconds after it appears, and fires Overdrive when the meter is full and a
+ * crowd is on the field.
+ */
+sensiblePlayer.during = (s, cfg) => {
+  for (const p of [...s.pickups]) {
+    if (p.life <= cfg.pickups.lifeSeconds - 2) collectPickup(s, cfg, p.id);
+  }
+  if (s.charge >= 1 && !s.boost && s.enemies.length >= 12) activateBoost(s, cfg, "overdrive");
+};

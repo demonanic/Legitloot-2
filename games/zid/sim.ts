@@ -6,7 +6,7 @@
  */
 
 import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig } from "./config.js";
-import { tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
+import { buildableTiles, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
 
@@ -117,6 +117,30 @@ export interface Popup {
   life: number;
 }
 
+/** Where a zombie died, for drawing only. */
+export interface Splat {
+  x: number;
+  y: number;
+  type: EnemyType;
+  /** Fixed per-splat number so its shape doesn't flicker. */
+  shape: number;
+  life: number;
+}
+
+export type PickupKind = "health" | "supplies";
+export interface Pickup {
+  id: number;
+  kind: PickupKind;
+  x: number;
+  y: number;
+  /** Supplies given (0 for health). */
+  amount: number;
+  life: number;
+}
+
+export type BoostKind = "overdrive" | "bounty";
+export const SPLAT_SECONDS = 5;
+
 /** A brief explosion marker, for drawing only. */
 export interface Blast {
   x: number;
@@ -181,6 +205,19 @@ export interface GameState {
   notices: Notice[];
   /** Floating "+N" Supplies from kills, for drawing only. */
   popups: Popup[];
+  /** Splatters where zombies died, for drawing only. */
+  splats: Splat[];
+  /** Collectable icons on the field. */
+  pickups: Pickup[];
+  nextPickupId: number;
+  /** Seconds of assault until the next pickup appears. */
+  pickupTimer: number;
+  /** Separate random stream for pickups, so they never disturb wave rolls. */
+  pickupRng: number;
+  /** Charge meter, 0..1. */
+  charge: number;
+  /** The boost running now, if any. */
+  boost: { kind: BoostKind; left: number; total: number } | null;
   spawns: Spawn[];
   nextSpawn: number;
   nextEnemyId: number;
@@ -240,6 +277,13 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     blasts: [],
     notices: [],
     popups: [],
+    splats: [],
+    pickups: [],
+    nextPickupId: 1,
+    pickupTimer: cfg.pickups.everyMin,
+    pickupRng: (seed ^ 0x51ed27) | 0,
+    charge: 0,
+    boost: null,
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,
@@ -837,13 +881,91 @@ export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: num
   if (e.hp <= 0) {
     e.hp = 0;
     s.kills++;
-    const drop = rollDrop(s, cfg, e.type);
+    const bounty = s.boost?.kind === "bounty" ? cfg.boost.bounty.drops : 1;
+    const drop = rollDrop(s, cfg, e.type) * bounty;
+    if (!s.boost) s.charge = Math.min(1, s.charge + 1 / cfg.boost.killsToFill);
+    if (s.splats.length >= 140) s.splats.shift();
+    s.splats.push({ x: e.x, y: e.y, type: e.type, shape: e.id, life: SPLAT_SECONDS });
     s.currency += drop;
     s.earned += drop;
     if (drop > 0 && s.popups.length < 80) s.popups.push({ x: e.x, y: e.y, amount: drop, life: POPUP_SECONDS });
     return true;
   }
   return false;
+}
+
+function pickupRandom(s: GameState): number {
+  s.pickupRng = (s.pickupRng + 0x6d2b79f5) | 0;
+  let t = s.pickupRng;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Pickups appear only during an assault, on a random tile inside the fence, and fade. */
+function stepPickups(s: GameState, cfg: GameConfig, dt: number): void {
+  if (s.pickups.length > 0) {
+    for (const p of s.pickups) p.life -= dt;
+    s.pickups = s.pickups.filter((p) => p.life > 0);
+  }
+  const pc = cfg.pickups;
+  if (s.phase !== "wave" || pc.everyMax <= 0) return;
+  s.pickupTimer -= dt;
+  if (s.pickupTimer > 0) return;
+  s.pickupTimer = pc.everyMin + pickupRandom(s) * (pc.everyMax - pc.everyMin);
+  const tiles = buildableTiles(cfg);
+  if (tiles.length === 0) return;
+  const tile = tiles[Math.floor(pickupRandom(s) * tiles.length)]!;
+  const hurt = s.stronghold.hp < s.stronghold.maxHp;
+  const kind: PickupKind = hurt && pickupRandom(s) < pc.healthChance ? "health" : "supplies";
+  const amount = kind === "supplies" ? pc.suppliesMin + Math.floor(pickupRandom(s) * (pc.suppliesMax - pc.suppliesMin + 1)) : 0;
+  const c = tileCenter(cfg, tile.col, tile.row);
+  s.pickups.push({ id: s.nextPickupId++, kind, x: c.x, y: c.y, amount, life: pc.lifeSeconds });
+}
+
+/** The pickup a tap at this point would collect, if any (closest within reach). */
+export function pickupAt(s: GameState, cfg: GameConfig, x: number, y: number): Pickup | null {
+  let best: Pickup | null = null;
+  let bestD = cfg.pickups.tapRadius;
+  for (const p of s.pickups) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d <= bestD) {
+      best = p;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** Collect a pickup: health repairs the stronghold at once, supplies add Supplies. */
+export function collectPickup(s: GameState, cfg: GameConfig, id: number): { ok: true; kind: PickupKind; amount: number } | { ok: false } {
+  const i = s.pickups.findIndex((p) => p.id === id);
+  if (i < 0 || s.phase === "lost") return { ok: false };
+  const p = s.pickups.splice(i, 1)[0]!;
+  let amount = p.amount;
+  if (p.kind === "health") {
+    const before = s.stronghold.hp;
+    s.stronghold.hp = Math.min(s.stronghold.maxHp, before + s.stronghold.maxHp * cfg.pickups.healShare);
+    amount = Math.round(s.stronghold.hp - before);
+  } else {
+    s.currency += amount;
+    s.earned += amount;
+    s.popups.push({ x: p.x, y: p.y, amount, life: POPUP_SECONDS });
+  }
+  return { ok: true, kind: p.kind, amount };
+}
+
+export type BoostRejection = "not-in-assault" | "not-charged" | "already-active";
+
+/** Spend a full charge meter on a boost. Assault only. */
+export function activateBoost(s: GameState, cfg: GameConfig, kind: BoostKind): { ok: true } | { ok: false; reason: BoostRejection } {
+  if (s.phase !== "wave") return { ok: false, reason: "not-in-assault" };
+  if (s.boost) return { ok: false, reason: "already-active" };
+  if (s.charge < 1) return { ok: false, reason: "not-charged" };
+  const seconds = cfg.boost[kind].seconds;
+  s.charge = 0;
+  s.boost = { kind, left: seconds, total: seconds };
+  return { ok: true };
 }
 
 export const POPUP_SECONDS = 1;
@@ -897,9 +1019,14 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     }
   }
 
+  stepPickups(s, cfg, dt);
+  if (s.boost) {
+    s.boost.left -= dt;
+    if (s.boost.left <= 0) s.boost = null;
+  }
   stepEnemies(s, cfg, dt);
   stepTraps(s, cfg);
-  stepTurrets(s, cfg, dt);
+  stepTurrets(s, cfg, s.boost?.kind === "overdrive" ? dt * cfg.boost.overdrive.fireRate : dt);
   stepProjectiles(s, cfg, dt);
   stepRockets(s, cfg, dt);
   stepShells(s, cfg, dt);
@@ -1265,6 +1392,10 @@ function stepBlasts(s: GameState, dt: number): void {
   if (s.notices.length > 0) {
     for (const n of s.notices) n.life -= dt;
     s.notices = s.notices.filter((n) => n.life > 0);
+  }
+  if (s.splats.length > 0) {
+    for (const p of s.splats) p.life -= dt;
+    s.splats = s.splats.filter((p) => p.life > 0);
   }
   if (s.popups.length > 0) {
     for (const p of s.popups) {

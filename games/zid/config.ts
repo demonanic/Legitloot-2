@@ -206,6 +206,35 @@ export interface GameConfig {
   waves: WaveRules;
   projectile: { radius: number; maxLifetime: number };
   limits: { maxEnemies: number; maxProjectiles: number };
+  /**
+   * Pickups: icons that appear inside the fence during an assault. Tap one
+   * before it fades to collect it. "health" repairs the stronghold at once;
+   * "supplies" adds Supplies.
+   */
+  pickups: {
+    /** Seconds between pickups, rolled in this range. 0 max = never. */
+    everyMin: number;
+    everyMax: number;
+    lifeSeconds: number;
+    /** How close a tap must be to collect. */
+    tapRadius: number;
+    /** Chance a pickup is health (only when the stronghold is damaged). */
+    healthChance: number;
+    /** Health restored, as a share of the stronghold's maximum. */
+    healShare: number;
+    suppliesMin: number;
+    suppliesMax: number;
+  };
+  /**
+   * The charge meter: kills fill it; when full the player triggers one boost
+   * during an assault. Overdrive speeds every weapon up; Bounty multiplies
+   * Supplies from kills. No charge builds while a boost is running.
+   */
+  boost: {
+    killsToFill: number;
+    overdrive: { seconds: number; fireRate: number };
+    bounty: { seconds: number; drops: number };
+  };
   /** Provisional design target used by scripts/balance.mjs, not by the game. */
   balance: { typicalDefeatWaveMin: number; typicalDefeatWaveMax: number };
 }
@@ -305,7 +334,7 @@ export const baseConfig: GameConfig = {
   waves: {
     baseCount: 40,
     countPerWave: 6,
-    hpGrowthPerWave: 0.27, // tuned with scripts/balance.mjs: sensible player falls around waves 11-15 and takes hits from wave 1
+    hpGrowthPerWave: 0.285, // tuned with scripts/balance.mjs: sensible player falls around waves 11-15 and takes hits from wave 1
     runnerFrom: 2,
     runnerShareStep: 0.05,
     runnerShareMax: 0.3,
@@ -327,6 +356,8 @@ export const baseConfig: GameConfig = {
   },
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
+  pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.45, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
+  boost: { killsToFill: 90, overdrive: { seconds: 8, fireRate: 2 }, bounty: { seconds: 12, drops: 3 } },
   balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 15 },
 };
 
@@ -346,6 +377,7 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
     turret: { ...base.turret, cost: 0, fireRate: 100, damage: 0, range: 1500 },
     enemies: { ...base.enemies, walker: { ...base.enemies.walker, maxHp: 1e9, speed: 1.5 } },
     wave: { ...base.wave, prepSeconds: 1, warningSeconds: 0 },
+    pickups: { ...base.pickups, everyMax: 0 },
     waves: {
       ...base.waves,
       baseCount: 50,

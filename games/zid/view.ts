@@ -13,6 +13,8 @@ import {
   remainingEnemies,
   structureAt,
   turretRange,
+  SPLAT_SECONDS,
+  type BoostKind,
   type BuildRejection,
   type GameState,
   type ManageRejection,
@@ -102,6 +104,8 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
 
 export interface UiActions {
   startNow(): void;
+  /** Spend the full charge meter on a boost. */
+  boost(kind: BoostKind): void;
   /** Run a bottom-menu action for the selected tile. */
   panel(action: PanelAction): void;
   restart(): void;
@@ -125,6 +129,10 @@ export function buttonRects(cfg: GameConfig) {
     /** Backing behind the bottom menu; blocks taps on tiles underneath. */
     panel: { x: 0, y: h - 400, w, h: 400 },
     restart: { x: w / 2 - 150, y: h / 2 + 150, w: 300, h: 84 },
+    /** Shown, flashing, only while the charge meter is full during an assault. */
+    boostOverdrive: { x: 40, y: h - 132, w: 310, h: 76 },
+    boostBounty: { x: 370, y: h - 132, w: 310, h: 76 },
+    meter: { x: 40, y: h - 40, w: w - 80, h: 16 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
   };
 }
@@ -133,6 +141,10 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   const r = buttonRects(cfg);
   const over = () => getState().phase === "lost";
   const selecting = () => getView().selected !== null && !over();
+  const boostReady = () => {
+    const s = getState();
+    return s.phase === "wave" && s.charge >= 1 && !s.boost;
+  };
   const buttonIn = (slot: PanelSlot) => {
     const sel = getView().selected;
     if (!sel) return null;
@@ -151,6 +163,8 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   return [
     rectRegion("panel", r.panel, () => true, selecting),
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
+    rectRegion("boost-overdrive", r.boostOverdrive, () => act.boost("overdrive"), boostReady),
+    rectRegion("boost-bounty", r.boostBounty, () => act.boost("bounty"), boostReady),
     slotRegion("a0"),
     slotRegion("b0"),
     slotRegion("a1"),
@@ -330,14 +344,10 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     }
   }
 
-  // Stronghold.
-  const sh = s.stronghold;
-  ctx.fillStyle = C.stronghold;
-  ctx.strokeStyle = C.strongholdEdge;
-  ctx.lineWidth = 4;
-  ctx.fillRect(sh.x - sh.halfSize, sh.y - sh.halfSize, sh.halfSize * 2, sh.halfSize * 2);
-  ctx.strokeRect(sh.x - sh.halfSize, sh.y - sh.halfSize, sh.halfSize * 2, sh.halfSize * 2);
-  bar(ctx, sh.x - 70, sh.y - sh.halfSize - 26, 140, 12, sh.hp / sh.maxHp, sh.hp / sh.maxHp > 0.35 ? C.good : C.bad);
+  // Ground stains where zombies died (under everything that stands).
+  for (const sp of s.splats) drawSplat(ctx, sp.x, sp.y, sp.type === "brute", cfg.enemies[sp.type].radius, sp.shape, SPLAT_SECONDS - sp.life);
+
+  drawStronghold(ctx, s);
 
   // Structures: traps, rubble, barricades, weapons.
   for (const sl of s.structures) {
@@ -519,6 +529,23 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     }
   }
 
+  // Pickups: tap before they fade.
+  for (const p of s.pickups) drawPickup(ctx, cfg, s, p.kind, p.x, p.y, p.life);
+
+  // Overdrive: every working weapon glows.
+  if (s.boost?.kind === "overdrive") {
+    ctx.strokeStyle = C.flash;
+    ctx.lineWidth = 3;
+    ctx.globalAlpha = 0.45 + 0.35 * Math.sin(s.time * 14);
+    for (const st of s.structures) {
+      if (!st.turret || st.destroyed) continue;
+      ctx.beginPath();
+      ctx.arc(st.x, st.y, 30, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // HUD.
   ctx.fillStyle = C.hudBg;
   ctx.fillRect(0, 0, W, 78);
@@ -605,6 +632,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText("Tap a tile to build, or anything you built to manage it", W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
   }
+  if (!sel && s.phase !== "lost") drawChargeMeter(ctx, cfg, s, r);
 
   // Unlock notices: a banner under the HUD.
   if (s.notices.length > 0) {
@@ -980,4 +1008,238 @@ function drawRocketLauncher(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: G
     }
   }
   drawSmoke(ctx, s, sl.x + cos * 18, sl.y + sin * 18, t.lastShot, 1.0, 5);
+}
+
+/** Deterministic 0..1 from a seed and an index (shapes must not flicker). */
+function hash01(seed: number, i: number): number {
+  const x = Math.sin(seed * 127.1 + i * 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/** A kill: droplets burst outward, leaving a stain that fades. Green, or dark red for brutes. */
+function drawSplat(ctx: CanvasRenderingContext2D, x: number, y: number, red: boolean, radius: number, seed: number, age: number): void {
+  const rgb = red ? "168,40,34" : "104,168,58";
+  const fade = Math.max(0, 1 - age / SPLAT_SECONDS);
+  const burst = Math.min(1, age / 0.18);
+  // Stain: a few overlapping blobs.
+  ctx.fillStyle = `rgba(${rgb},${(0.5 * fade).toFixed(3)})`;
+  for (let i = 0; i < 5; i++) {
+    const ang = hash01(seed, i) * Math.PI * 2;
+    const d = radius * 0.7 * hash01(seed, i + 10) * burst;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(ang) * d, y + Math.sin(ang) * d, radius * (0.45 + 0.45 * hash01(seed, i + 20)) * (0.5 + 0.5 * burst), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Droplets flung out, then left where they land.
+  ctx.fillStyle = `rgba(${rgb},${(0.85 * fade).toFixed(3)})`;
+  for (let i = 0; i < 7; i++) {
+    const ang = hash01(seed, i + 30) * Math.PI * 2;
+    const d = radius * (1.1 + 1.5 * hash01(seed, i + 40)) * burst;
+    ctx.beginPath();
+    ctx.arc(x + Math.cos(ang) * d, y + Math.sin(ang) * d, 2 + 3 * hash01(seed, i + 50), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // The pop itself: a bright flash for the first instant.
+  if (age < 0.12) {
+    ctx.fillStyle = `rgba(${red ? "255,150,140" : "200,255,150"},${(0.8 * (1 - age / 0.12)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, radius * (1 + age * 6), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** The base: walled compound with corner posts, plated roof, door, lit windows, radar, and a flag per level. */
+function drawStronghold(ctx: CanvasRenderingContext2D, s: GameState): void {
+  const sh = s.stronghold;
+  const h = sh.halfSize;
+  const frac = sh.hp / sh.maxHp;
+  const x0 = sh.x - h;
+  const y0 = sh.y - h;
+  // Shadow and outer wall.
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(x0 + 5, y0 + 7, h * 2, h * 2);
+  ctx.fillStyle = C.stronghold;
+  ctx.strokeStyle = C.strongholdEdge;
+  ctx.lineWidth = 4;
+  ctx.fillRect(x0, y0, h * 2, h * 2);
+  ctx.strokeRect(x0, y0, h * 2, h * 2);
+  // Roof plates.
+  ctx.fillStyle = "#676c63";
+  ctx.fillRect(x0 + 10, y0 + 10, h * 2 - 20, h * 2 - 20);
+  ctx.strokeStyle = "rgba(20,22,20,0.45)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 1; i < 3; i++) {
+    const o = 10 + ((h * 2 - 20) * i) / 3;
+    ctx.moveTo(x0 + o, y0 + 10);
+    ctx.lineTo(x0 + o, y0 + h * 2 - 10);
+    ctx.moveTo(x0 + 10, y0 + o);
+    ctx.lineTo(x0 + h * 2 - 10, y0 + o);
+  }
+  ctx.stroke();
+  // Hazard stripe along the front, and a door.
+  for (let i = 0; i < 8; i++) {
+    ctx.fillStyle = i % 2 === 0 ? "#d6a84a" : "#2a2c29";
+    ctx.fillRect(x0 + 10 + (i * (h * 2 - 20)) / 8, y0 + h * 2 - 18, (h * 2 - 20) / 8, 8);
+  }
+  ctx.fillStyle = "#2a2c29";
+  ctx.fillRect(sh.x - 9, y0 + h * 2 - 10, 18, 10);
+  // Windows: warm light that flickers; dark when the base is nearly gone.
+  const lit = frac > 0.15;
+  for (const [wx, wy] of [[-h + 20, -h + 20], [h - 32, -h + 20], [-h + 20, 2], [h - 32, 2]] as const) {
+    const flicker = 0.75 + 0.25 * Math.sin(s.time * 5 + wx + wy);
+    ctx.fillStyle = lit ? `rgba(240,214,130,${flicker.toFixed(2)})` : "#30332f";
+    ctx.fillRect(sh.x + wx, sh.y + wy, 12, 9);
+  }
+  // Corner posts with beacon lamps (red and blinking when in danger).
+  const danger = frac <= 0.35;
+  const blink = danger ? (Math.sin(s.time * 10) > 0 ? 1 : 0.25) : 1;
+  for (const [cx, cy] of [[x0, y0], [x0 + h * 2, y0], [x0, y0 + h * 2], [x0 + h * 2, y0 + h * 2]] as const) {
+    ctx.fillStyle = "#3d403b";
+    ctx.strokeStyle = C.strongholdEdge;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = danger ? `rgba(226,88,74,${blink})` : "#9fd47a";
+    ctx.beginPath();
+    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Radar dish, sweeping.
+  const ra = s.time * 1.6;
+  ctx.strokeStyle = "#c9cdc4";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(sh.x + 14, sh.y - 12, 10, ra, ra + Math.PI);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(sh.x + 14, sh.y - 12);
+  ctx.lineTo(sh.x + 14 + Math.cos(ra + Math.PI / 2) * 12, sh.y - 12 + Math.sin(ra + Math.PI / 2) * 12);
+  ctx.stroke();
+  // Flag: waves, and shows the base level as stripes.
+  const fx = sh.x - 18;
+  const fy = sh.y - 4;
+  ctx.strokeStyle = "#d9dcd4";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy + 16);
+  ctx.lineTo(fx, fy - 26);
+  ctx.stroke();
+  ctx.fillStyle = "#c8553d";
+  ctx.beginPath();
+  ctx.moveTo(fx, fy - 26);
+  for (let i = 0; i <= 6; i++) ctx.lineTo(fx - (i * 22) / 6, fy - 26 + Math.sin(s.time * 6 + i * 0.9) * 2.5);
+  for (let i = 6; i >= 0; i--) ctx.lineTo(fx - (i * 22) / 6, fy - 12 + Math.sin(s.time * 6 + i * 0.9) * 2.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#f1eee3";
+  for (let i = 0; i <= sh.level && i < 5; i++) ctx.fillRect(fx - 5 - i * 4, fy - 23, 2, 8);
+  // Damage: cracks, then smoke when nearly gone.
+  if (frac < 0.7) {
+    ctx.strokeStyle = "rgba(15,16,15,0.8)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x0 + 14, y0 + 6);
+    ctx.lineTo(x0 + 26, y0 + 30);
+    ctx.lineTo(x0 + 18, y0 + 44);
+    if (frac < 0.45) {
+      ctx.moveTo(x0 + h * 2 - 8, y0 + h + 6);
+      ctx.lineTo(x0 + h * 2 - 30, y0 + h + 14);
+      ctx.lineTo(x0 + h * 2 - 38, y0 + h + 34);
+    }
+    ctx.stroke();
+  }
+  if (danger) {
+    for (let i = 0; i < 4; i++) {
+      const t = (s.time * 0.6 + i * 0.25) % 1;
+      ctx.fillStyle = `rgba(60,62,58,${(0.5 * (1 - t)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sh.x + 20 + Math.sin(s.time + i) * 6, sh.y + 10 - t * 60, 8 + t * 12, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  bar(ctx, sh.x - 70, y0 - 26, 140, 12, frac, frac > 0.35 ? C.good : C.bad);
+}
+
+/** A collectable badge: green cross (health) or gold $ (Supplies), bobbing, with a ring that runs down. */
+function drawPickup(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, kind: "health" | "supplies", x: number, y: number, life: number): void {
+  const total = cfg.pickups.lifeSeconds;
+  const age = total - life;
+  // Blink for the last two seconds.
+  if (life < 2 && Math.sin(s.time * 18) < -0.2) return;
+  const pop = Math.min(1, age / 0.2);
+  const bob = Math.sin(s.time * 4 + x) * 3;
+  const r = 24 * pop;
+  const cy = y + bob;
+  const main = kind === "health" ? "#5fd06a" : C.coin;
+  ctx.fillStyle = "rgba(10,11,10,0.85)";
+  ctx.beginPath();
+  ctx.arc(x, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = main;
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, cy, r + 6 + 3 * Math.sin(s.time * 6), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (life / total));
+  ctx.stroke();
+  ctx.fillStyle = main;
+  if (kind === "health") {
+    ctx.fillRect(x - 5 * pop, cy - 14 * pop, 10 * pop, 28 * pop);
+    ctx.fillRect(x - 14 * pop, cy - 5 * pop, 28 * pop, 10 * pop);
+  } else {
+    ctx.font = `800 ${Math.round(30 * pop)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("$", x, cy + 2);
+  }
+}
+
+/** Charge meter along the bottom; two flashing boost buttons when it is full. */
+function drawChargeMeter(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, r: ReturnType<typeof buttonRects>): void {
+  const m = r.meter;
+  const boost = s.boost;
+  const full = s.charge >= 1 && !boost;
+  const flash = 0.5 + 0.5 * Math.sin(s.time * 9);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  if (full && s.phase === "wave") {
+    // Glow behind the buttons so they can't be missed.
+    ctx.fillStyle = `rgba(233,194,74,${(0.18 + 0.22 * flash).toFixed(3)})`;
+    roundRect(ctx, r.boostOverdrive.x - 10, r.boostOverdrive.y - 10, r.boostBounty.x + r.boostBounty.w - r.boostOverdrive.x + 20, r.boostOverdrive.h + 20, 16);
+    ctx.fill();
+    button(ctx, r.boostOverdrive, "Overdrive", "primary");
+    button(ctx, r.boostBounty, `Bounty ×${cfg.boost.bounty.drops}`, "primary");
+    ctx.strokeStyle = `rgba(233,194,74,${(0.5 + 0.5 * flash).toFixed(3)})`;
+    ctx.lineWidth = 5;
+    for (const b of [r.boostOverdrive, r.boostBounty]) {
+      roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+      ctx.stroke();
+    }
+  }
+  const frac = boost ? boost.left / boost.total : s.charge;
+  const color = boost ? (boost.kind === "overdrive" ? C.flash : C.coin) : full ? `rgba(233,194,74,${(0.6 + 0.4 * flash).toFixed(3)})` : "#7fb0d8";
+  bar(ctx, m.x, m.y, m.w, m.h, frac, color);
+  ctx.strokeStyle = "rgba(241,238,227,0.35)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(m.x, m.y, m.w, m.h);
+  ctx.font = "800 15px system-ui, sans-serif";
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(10,11,10,0.9)";
+  const label = boost
+    ? `${boost.kind === "overdrive" ? "OVERDRIVE" : `BOUNTY ×${cfg.boost.bounty.drops}`} · ${Math.ceil(boost.left)}s`
+    : full
+      ? s.phase === "wave"
+        ? "CHARGED · PICK A BOOST"
+        : "CHARGED · READY FOR THE NEXT WAVE"
+      : `CHARGE ${Math.floor(s.charge * 100)}%`;
+  ctx.strokeText(label, m.x + m.w / 2, m.y + m.h / 2 + 1);
+  ctx.fillStyle = C.text;
+  ctx.fillText(label, m.x + m.w / 2, m.y + m.h / 2 + 1);
 }

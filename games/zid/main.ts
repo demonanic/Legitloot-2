@@ -14,7 +14,10 @@ import { baseConfig, stressConfig } from "./config.js";
 import { forgivingTile, overlapsStronghold, tileStatus } from "./grid.js";
 import type { PanelAction } from "./panel.js";
 import {
+  activateBoost,
   aimMortars,
+  collectPickup,
+  pickupAt,
   buildStructure,
   createState,
   recycleStructure,
@@ -117,6 +120,9 @@ function runPanelAction(action: PanelAction): void {
 
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
+  boost: (kind) => {
+    if (activateBoost(state, cfg, kind).ok) toast(kind === "overdrive" ? "Overdrive! Weapons fire twice as fast" : `Bounty! Kills pay ×${cfg.boost.bounty.drops}`);
+  },
   panel: (action) => runPanelAction(action),
   restart: () => {
     state = newRun();
@@ -135,6 +141,13 @@ bindTaps(canvas, renderer.toWorld, (p) => {
     // Forgiving: a tap just outside a usable tile still picks it.
     const tile = forgivingTile(cfg, wp.x, wp.y, (c, r) => !!structureAt(state, c, r) || overlapsStronghold(cfg, c, r));
     const status = tile ? tileStatus(cfg, tile.col, tile.row) : "out-of-bounds";
+    // Pickups come first: a tap on one collects it and does nothing else.
+    const pickup = pickupAt(state, cfg, wp.x, wp.y);
+    if (pickup) {
+      const got = collectPickup(state, cfg, pickup.id);
+      if (got.ok && got.kind === "health") toast(`Stronghold +${got.amount} health`);
+      return;
+    }
     if (state.phase === "wave") {
       // With mortars on the field, each tap aims one mortar (split fire);
       // tapping a crosshair hands that mortar back to automatic.

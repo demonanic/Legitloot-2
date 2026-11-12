@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Pickups and boosts update
+
+- **Pickups:** during an assault a green cross or a gold $ appears inside the fence every 10 to 18 seconds. Tap it within 7 seconds: the cross repairs 10% of the stronghold at once, the $ adds 12 to 25 Supplies. Health pickups only appear while the stronghold is damaged.
+- **Charge meter:** every kill fills it (90 kills to full). When full, two flashing buttons appear during an assault: **Overdrive** (all weapons fire twice as fast for 8 s) or **Bounty** (kills pay 3× for 12 s). No charge builds while a boost runs.
+- **Visuals:** green splatter on kills (dark red for brutes) that leaves a fading stain; the base now has plated roof, lit windows, corner beacons, a radar, a flag with a stripe per level, cracks as it takes damage and smoke when nearly gone.
+- Zombie health growth per wave is 0.285 (was 0.27) to offset the new help.
+
 ### Base update
 
 - **Base upgrades:** tap the stronghold to upgrade the base (100, 180, 280, 400). Each level raises how many machine guns and mortars you may build (3/1 at the start, up to 12/5) and adds stronghold health. Barricades are never capped; rubble counts until recycled.

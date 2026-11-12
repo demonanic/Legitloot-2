@@ -167,7 +167,7 @@ test("traps: never block zombies and are never attacked", () => {
   const s = prep();
   const before = pathField(s, cfg).dist.slice();
   build(s, "mine", 4, 6);
-  build(s, "tripwire", 4, 11);
+  build(s, "tripwire", 4, 12);
   const after = pathField(s, cfg).dist;
   assert.deepEqual(Array.from(after), Array.from(before), "same routes with traps down");
 });

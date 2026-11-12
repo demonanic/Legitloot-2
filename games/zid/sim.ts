@@ -6,7 +6,7 @@
  */
 
 import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig } from "./config.js";
-import { buildableTiles, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
+import { buildableTiles, gridSize, overlapsStronghold, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
 
@@ -166,23 +166,59 @@ export interface Truck {
   due: boolean;
   /** Completed runs, for the end screen. */
   runs: number;
+  /** The route it is following: waypoints left to visit, ending at (tx, ty). */
+  path: { x: number; y: number }[];
+  /** Layout the route was planned for; a change means plan again. */
+  pathVersion: number;
+  /** True when the only route goes through something built: then it pushes through. */
+  forced: boolean;
 }
 
-/** Where the truck parks: just below the stronghold's door, facing east. */
+/** Where the truck parks: the middle of its bay beside the door, facing east. */
 export function truckParking(cfg: GameConfig): { x: number; y: number } {
-  const sh = cfg.stronghold;
-  return { x: sh.x, y: sh.y + sh.halfSize + cfg.truck.width / 2 + 6 };
+  const bay = cfg.construction.truckBay;
+  if (bay.length === 0) {
+    const sh = cfg.stronghold;
+    return { x: sh.x, y: sh.y + sh.halfSize + cfg.truck.width / 2 + 6 };
+  }
+  let x = 0;
+  let y = 0;
+  for (const [col, row] of bay) {
+    const c = tileCenter(cfg, col, row);
+    x += c.x;
+    y += c.y;
+  }
+  return { x: x / bay.length, y: y / bay.length };
 }
 
 function newTruck(cfg: GameConfig): Truck {
   const p = truckParking(cfg);
-  return { state: "parked", x: p.x, y: p.y, heading: 0, speed: 0, hp: cfg.truck.maxHp, maxHp: cfg.truck.maxHp, tx: p.x, ty: p.y, load: 0, outcome: null, timer: 0, due: false, runs: 0 };
+  return { state: "parked", x: p.x, y: p.y, heading: 0, speed: 0, hp: cfg.truck.maxHp, maxHp: cfg.truck.maxHp, tx: p.x, ty: p.y, load: 0, outcome: null, timer: 0, due: false, runs: 0, path: [], pathVersion: -1, forced: false };
 }
 
 /** Whether zombies can hurt the truck right now. */
 export function truckExposed(s: GameState): boolean {
   const st = s.truck.state;
   return st === "departing" || st === "arriving" || st === "unloading";
+}
+
+/** How much stockpiled Salvage this run may still turn into starting Supplies (only before the first wave). */
+export function salvageUsable(s: GameState, cfg: GameConfig, stockpile: number): number {
+  if (s.wave !== 1 || (s.phase !== "prep" && s.phase !== "warning") || s.wavesCleared > 0) return 0;
+  const room = cfg.salvage.maxStartBonus / cfg.salvage.suppliesPerSalvage - s.salvageUsed;
+  return Math.max(0, Math.min(Math.floor(stockpile), Math.floor(room)));
+}
+
+/**
+ * Turn stockpiled Salvage into starting Supplies. Returns how much Salvage
+ * was spent (0 if none could be); the caller takes it off the stockpile.
+ */
+export function useSalvage(s: GameState, cfg: GameConfig, stockpile: number): number {
+  const amount = salvageUsable(s, cfg, stockpile);
+  if (amount <= 0) return 0;
+  s.salvageUsed += amount;
+  s.currency += amount * cfg.salvage.suppliesPerSalvage;
+  return amount;
 }
 
 export type TruckRejection = "run-over" | "assault-active" | "truck-busy" | "insufficient-funds";
@@ -201,6 +237,8 @@ export function sendTruck(s: GameState, cfg: GameConfig): { ok: true } | { ok: f
   if (reason) return { ok: false, reason };
   s.currency -= cfg.truck.cost;
   s.truck.state = "queued";
+  // Pick its way out now, so the driver can line the truck up while waiting.
+  routeTruck(s, cfg, truckGate(s, cfg));
   return { ok: true };
 }
 
@@ -219,14 +257,197 @@ function truckNotice(s: GameState, text: string): void {
   s.notices.push({ text, life: 5 });
 }
 
+/** What the truck must not drive through: 2 = never (rocks, the stronghold), 1 = things you built, 0 = open ground. */
+function truckBlock(s: GameState, cfg: GameConfig, col: number, row: number): 0 | 1 | 2 {
+  const { cols, rows } = gridSize(cfg);
+  if (col < 0 || row < 0 || col >= cols || row >= rows) return 0; // beyond the grid is open ground
+  if (overlapsStronghold(cfg, col, row)) return 2;
+  if (cfg.construction.invalidTerrain.some(([c, r]) => c === col && r === row)) return 2;
+  return structureAt(s, col, row) ? 1 : 0;
+}
+
+/** As truckBlock, for a world point. */
+function truckBlockAt(s: GameState, cfg: GameConfig, x: number, y: number): 0 | 1 | 2 {
+  const t = cfg.construction.tileSize;
+  const o = cfg.construction.origin;
+  return truckBlock(s, cfg, Math.floor((x - o.x) / t), Math.floor((y - o.y) / t));
+}
+
+/** How far each kind of thing reaches from the middle of its tile, for the truck's collisions. */
+function assetRadius(kind: StructureKind | "rock"): number {
+  return kind === "rock" ? 26 : kind === "barricade" ? 26 : kind === "mine" || kind === "tripwire" ? 14 : 23;
+}
+
 /**
- * Drive: turn toward the target at a limited rate (so it curves rather than
- * snapping), swerve away from zombies in its way, and slow down in tight turns.
+ * Whether the truck's body (a rectangle turned to its heading) overlaps
+ * anything solid: the stronghold and rocks (level 2), plus everything built,
+ * rubble and traps included (level 1). Uses each thing's real footprint, not
+ * its whole tile.
+ */
+export function truckTouches(s: GameState, cfg: GameConfig, x: number, y: number, heading: number, level: 1 | 2 = 1): boolean {
+  const cos = Math.cos(heading);
+  const sin = Math.sin(heading);
+  const hl = cfg.truck.length / 2;
+  const hw = cfg.truck.width / 2;
+  // Circle against the turned rectangle: bring the circle's centre into the truck's own frame.
+  const hits = (cx: number, cy: number, r: number): boolean => {
+    const dx = cx - x;
+    const dy = cy - y;
+    const lx = dx * cos + dy * sin;
+    const ly = -dx * sin + dy * cos;
+    const nx = Math.max(-hl, Math.min(hl, lx));
+    const ny = Math.max(-hw, Math.min(hw, ly));
+    return Math.hypot(lx - nx, ly - ny) < r;
+  };
+  // Stronghold: its square against the truck's corners and edge midpoints.
+  const sh = s.stronghold;
+  for (const f of [-1, -0.5, 0, 0.5, 1]) {
+    for (const w of [-1, 0, 1]) {
+      const px = x + cos * hl * f - sin * hw * w;
+      const py = y + sin * hl * f + cos * hw * w;
+      if (Math.abs(px - sh.x) < sh.halfSize && Math.abs(py - sh.y) < sh.halfSize) return true;
+    }
+  }
+  for (const [col, row] of cfg.construction.invalidTerrain) {
+    const c = tileCenter(cfg, col, row);
+    if (hits(c.x, c.y, assetRadius("rock"))) return true;
+  }
+  if (level === 2) return false;
+  for (const st of s.structures) if (hits(st.x, st.y, assetRadius(st.kind))) return true;
+  return false;
+}
+
+/** A straight run between two points keeps the whole body clear of everything built and every rock. */
+function truckClearRun(s: GameState, cfg: GameConfig, ax: number, ay: number, bx: number, by: number): boolean {
+  const d = Math.hypot(bx - ax, by - ay);
+  const n = Math.max(1, Math.ceil(d / 12));
+  const nx = -(by - ay) / (d || 1);
+  const ny = (bx - ax) / (d || 1);
+  const pad = cfg.truck.width / 2 + 6;
+  for (let i = 0; i <= n; i++) {
+    const x = ax + ((bx - ax) * i) / n;
+    const y = ay + ((by - ay) * i) / n;
+    for (const w of [-pad, 0, pad]) if (truckBlockAt(s, cfg, x + nx * w, y + ny * w) >= 1) return false;
+  }
+  return true;
+}
+
+/**
+ * Plan a route for the truck across the tile grid: around rocks, the
+ * stronghold and everything built. If you have walled it in, it goes through
+ * as few of your structures as it can (never rocks or the stronghold). The
+ * tile route is then straightened wherever a direct run is clear, so it
+ * drives in long lines and wide corners instead of zig-zagging tile to tile.
+ */
+export function planTruckPath(
+  s: GameState,
+  cfg: GameConfig,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  info?: { forced: boolean },
+): { x: number; y: number }[] {
+  const { cols, rows } = gridSize(cfg);
+  const t = cfg.construction.tileSize;
+  const o = cfg.construction.origin;
+  const clampTileOf = (p: { x: number; y: number }) => ({
+    col: Math.min(cols - 1, Math.max(0, Math.floor((p.x - o.x) / t))),
+    row: Math.min(rows - 1, Math.max(0, Math.floor((p.y - o.y) / t))),
+  });
+  const a = clampTileOf(from);
+  const b = clampTileOf(to);
+  const n = cols * rows;
+  const dist = new Float64Array(n).fill(Infinity);
+  const prev = new Int32Array(n).fill(-1);
+  const done = new Uint8Array(n);
+  const startI = a.row * cols + a.col;
+  const goalI = b.row * cols + b.col;
+  const stepCost = (col: number, row: number, i: number): number => {
+    if (i === startI || i === goalI) return 1;
+    const k = truckBlock(s, cfg, col, row);
+    return k === 2 ? Infinity : k === 1 ? 60 : 1;
+  };
+  dist[startI] = 0;
+  for (;;) {
+    let u = -1;
+    let best = Infinity;
+    for (let i = 0; i < n; i++) {
+      if (!done[i] && dist[i]! < best) {
+        best = dist[i]!;
+        u = i;
+      }
+    }
+    if (u < 0 || u === goalI) break;
+    done[u] = 1;
+    const uc = u % cols;
+    const ur = (u - uc) / cols;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const c = uc + dc;
+        const r = ur + dr;
+        if (c < 0 || r < 0 || c >= cols || r >= rows) continue;
+        const v = r * cols + c;
+        const w = stepCost(c, r, v);
+        if (!Number.isFinite(w)) continue;
+        // No squeezing diagonally past a corner of something solid.
+        if (dr && dc && (truckBlock(s, cfg, uc + dc, ur) >= 1 || truckBlock(s, cfg, uc, ur + dr) >= 1)) continue;
+        const nd = dist[u]! + w * (dr && dc ? Math.SQRT2 : 1);
+        if (nd < dist[v]!) {
+          dist[v] = nd;
+          prev[v] = u;
+        }
+      }
+    }
+  }
+  const tiles: { x: number; y: number }[] = [];
+  if (Number.isFinite(dist[goalI]!)) {
+    for (let i = goalI; i !== -1 && i !== startI; i = prev[i]!) {
+      const c = i % cols;
+      tiles.push(tileCenter(cfg, c, (i - c) / cols));
+      // Walled in: the only way out goes through something you built.
+      if (info && i !== goalI && truckBlock(s, cfg, c, (i - c) / cols) === 1) info.forced = true;
+    }
+    tiles.reverse();
+  }
+  const raw = [{ x: from.x, y: from.y }, ...tiles, { x: to.x, y: to.y }];
+  // Straighten: from each point, jump to the farthest later point with a clear run.
+  const out: { x: number; y: number }[] = [];
+  let i = 0;
+  while (i < raw.length - 1) {
+    let j = raw.length - 1;
+    while (j > i + 1 && !truckClearRun(s, cfg, raw[i]!.x, raw[i]!.y, raw[j]!.x, raw[j]!.y)) j--;
+    out.push(raw[j]!);
+    i = j;
+  }
+  return out;
+}
+
+function routeTruck(s: GameState, cfg: GameConfig, to: { x: number; y: number }): void {
+  const t = s.truck;
+  t.tx = to.x;
+  t.ty = to.y;
+  const info = { forced: false };
+  t.path = planTruckPath(s, cfg, t, to, info);
+  t.forced = info.forced;
+  t.pathVersion = s.layoutVersion;
+}
+
+/**
+ * Drive along the planned route: aim at the next waypoint, turn at a limited
+ * rate (so it curves rather than snapping), ease the speed up and down, slow
+ * for corners and for the final approach, and swerve a little round zombies
+ * when there is room. It never enters a rock, the stronghold or anything built
+ * unless the route itself had to go through it.
  */
 function driveTruck(s: GameState, cfg: GameConfig, dt: number): number {
   const t = s.truck;
   const c = cfg.truck;
-  let want = Math.atan2(t.ty - t.y, t.tx - t.x);
+  if (t.pathVersion !== s.layoutVersion) routeTruck(s, cfg, { x: t.tx, y: t.ty });
+  // Tick off waypoints as it reaches them (the last one is the destination itself).
+  while (t.path.length > 1 && Math.hypot(t.path[0]!.x - t.x, t.path[0]!.y - t.y) < 34) t.path.shift();
+  const aim = t.path[0] ?? { x: t.tx, y: t.ty };
+  const dist = Math.hypot(t.tx - t.x, t.ty - t.y);
+  const base = Math.atan2(aim.y - t.y, aim.x - t.x);
   // Swerve: each zombie ahead and close pushes the heading away from itself.
   let push = 0;
   for (const e of s.enemies) {
@@ -238,28 +459,69 @@ function driveTruck(s: GameState, cfg: GameConfig, dt: number): number {
     let rel = Math.atan2(dy, dx) - t.heading;
     rel = Math.atan2(Math.sin(rel), Math.cos(rel));
     if (Math.abs(rel) > 1.1) continue; // not in front
-    push += (rel >= 0 ? -1 : 1) * (1 - d / 110) * 0.9;
+    push += (rel >= 0 ? -1 : 1) * (1 - d / 110) * 0.7;
   }
-  const dist = Math.hypot(t.tx - t.x, t.ty - t.y);
-  // Close to the target the swerve fades, so it can actually arrive.
-  want += Math.max(-1, Math.min(1, push)) * Math.min(1, dist / 160);
-  let diff = want - t.heading;
-  diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-  const turn = Math.max(-c.turnRate * dt, Math.min(c.turnRate * dt, diff));
-  t.heading += turn;
-  // Tight turns and the final approach are slower.
-  const cornering = 1 - 0.55 * Math.min(1, Math.abs(diff) / 1.4);
-  const braking = t.state === "arriving" ? Math.min(1, 0.35 + dist / 150) : 1;
-  t.speed = c.speed * cornering * braking;
-  t.x += Math.cos(t.heading) * t.speed * dt;
-  t.y += Math.sin(t.heading) * t.speed * dt;
+  // Close to the destination the swerve fades, so it can actually arrive.
+  const swerve = Math.max(-0.8, Math.min(0.8, push)) * Math.min(1, dist / 160);
+  const attempt = (want: number): { x: number; y: number; h: number; v: number; diff: number } => {
+    let diff = want - t.heading;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    const h = t.heading + Math.max(-c.turnRate * dt, Math.min(c.turnRate * dt, diff));
+    // Slower through corners and on the final approach; speed eases toward that target.
+    const cornering = 1 - 0.6 * Math.min(1, Math.abs(diff) / 1.2);
+    const braking = t.state === "arriving" ? Math.min(1, 0.3 + dist / 170) : 1;
+    const target = c.speed * cornering * braking;
+    const v = target > t.speed ? Math.min(target, t.speed + c.accel * dt) : Math.max(target, t.speed - c.brake * dt);
+    return { x: t.x + Math.cos(h) * v * dt, y: t.y + Math.sin(h) * v * dt, h, v, diff };
+  };
+  // Whatever it already overlaps (leaving the bay, or a route forced through a wall) doesn't count against it.
+  const already = t.forced ? 2 : truckTouches(s, cfg, t.x, t.y, t.heading) ? (truckTouches(s, cfg, t.x, t.y, t.heading, 2) ? 3 : 2) : 1;
+  const ok = (m: { x: number; y: number; h: number }) => already === 3 || !truckTouches(s, cfg, m.x, m.y, m.h, already as 1 | 2);
+  let move = attempt(base + swerve);
+  if (!ok(move)) move = attempt(base);
+  if (!ok(move)) {
+    // Something is in the way of that line: brake, and look for a nearby heading that is clear,
+    // preferring the one closest to where it wants to go.
+    const v = Math.max(16, t.speed - c.brake * dt);
+    let found: typeof move | null = null;
+    for (let k = 0; k <= 8 && !found; k++) {
+      for (const sign of k === 0 ? [0] : [1, -1]) {
+        const h = t.heading + sign * Math.min(k * 0.35, c.turnRate * dt * (k === 0 ? 0 : 1));
+        const cand = { x: t.x + Math.cos(h) * v * dt, y: t.y + Math.sin(h) * v * dt, h, v, diff: move.diff };
+        if (ok(cand)) {
+          found = cand;
+          break;
+        }
+      }
+    }
+    // Nothing clear: turn on the spot toward the route (never into a rock or the stronghold).
+    const spot = { x: t.x, y: t.y, h: move.h, v: 0, diff: move.diff };
+    move = found ?? (!truckTouches(s, cfg, spot.x, spot.y, spot.h, 2) ? spot : { ...spot, h: t.heading });
+  }
+  t.heading = move.h;
+  t.speed = move.v;
+  t.x = move.x;
+  t.y = move.y;
+  // Zombies don't stand inside it: anything it reaches is shouldered aside.
+  const reach = c.width / 2 + 4;
+  for (const e of s.enemies) {
+    if (e.hp <= 0) continue;
+    const dx = e.x - t.x;
+    const dy = e.y - t.y;
+    const d = Math.hypot(dx, dy);
+    const min = reach + cfg.enemies[e.type].radius * 0.6;
+    if (d < min && d > 0.01) {
+      e.x += (dx / d) * (min - d);
+      e.y += (dy / d) * (min - d);
+    }
+  }
   return dist;
 }
 
 function wreckTruck(s: GameState): void {
   const t = s.truck;
   s.blasts.push({ x: t.x, y: t.y, r: 70, life: BLAST_SECONDS });
-  truckNotice(s, t.load > 0 ? "Truck destroyed · the load is lost" : "Truck destroyed");
+  truckNotice(s, t.load > 0 ? "Truck destroyed · load lost" : "Truck destroyed");
   t.state = "wrecked";
   t.load = 0;
   t.speed = 0;
@@ -288,12 +550,19 @@ function stepTruck(s: GameState, cfg: GameConfig, dt: number): void {
   }
   switch (t.state) {
     case "queued":
-      if (s.phase === "wave") {
-        const gate = truckGate(s, cfg);
+      if (s.phase !== "wave") {
+        // Waiting to go: ease round in the bay to face the way out.
+        if (t.pathVersion !== s.layoutVersion) routeTruck(s, cfg, { x: t.tx, y: t.ty });
+        const first = t.path[0] ?? { x: t.tx, y: t.ty };
+        let d = Math.atan2(first.y - t.y, first.x - t.x) - t.heading;
+        d = Math.atan2(Math.sin(d), Math.cos(d));
+        t.heading += Math.max(-0.9 * dt, Math.min(0.9 * dt, d));
+        return;
+      }
+      {
         t.state = "departing";
-        t.tx = gate.x;
-        t.ty = gate.y;
-        truckNotice(s, "The salvage truck is heading out");
+        routeTruck(s, cfg, { x: t.tx, y: t.ty });
+        truckNotice(s, "Salvage truck heading out");
       }
       return;
     case "departing": {
@@ -314,23 +583,38 @@ function stepTruck(s: GameState, cfg: GameConfig, dt: number): void {
       if (t.timer > 0) return;
       t.due = false;
       if (t.outcome === "lost") {
-        truckNotice(s, "The salvage crew never made it back");
+        truckNotice(s, "The crew never made it back");
         t.state = "wrecked";
         return;
       }
       const gate = truckGate(s, cfg);
       t.x = gate.x;
       t.y = gate.y;
-      t.heading = Math.atan2(park.y - gate.y, park.x - gate.x);
-      t.tx = park.x;
-      t.ty = park.y;
       t.state = "arriving";
-      truckNotice(s, t.outcome === "empty" ? "The truck is coming back empty" : "The salvage truck is back · cover it while it unloads");
+      routeTruck(s, cfg, park);
+      const first = t.path[0] ?? park;
+      t.heading = Math.atan2(first.y - gate.y, first.x - gate.x);
+      t.speed = cfg.truck.speed * 0.8;
+      truckNotice(s, t.outcome === "empty" ? "Truck coming back empty" : "Truck is back · cover it");
       return;
     }
     case "arriving": {
-      const dist = driveTruck(s, cfg, dt);
-      if (dist <= 14) {
+      let dist = Math.hypot(park.x - t.x, park.y - t.y);
+      if (dist > 40) {
+        driveTruck(s, cfg, dt);
+        return;
+      }
+      // Docking: roll the last few metres straight into the bay and square up, facing east.
+      const roll = Math.min(dist, Math.max(14, t.speed - c.brake * dt) * dt);
+      t.speed = dt > 0 ? roll / dt : 0;
+      if (dist > 0) {
+        t.x += ((park.x - t.x) / dist) * roll;
+        t.y += ((park.y - t.y) / dist) * roll;
+      }
+      const square = Math.atan2(Math.sin(-t.heading), Math.cos(-t.heading));
+      t.heading += Math.max(-c.turnRate * dt, Math.min(c.turnRate * dt, square));
+      dist -= roll;
+      if (dist <= 1) {
         t.x = park.x;
         t.y = park.y;
         t.speed = 0;
@@ -359,11 +643,13 @@ function finishRun(s: GameState, cfg: GameConfig): void {
     s.currency += t.load;
     s.earned += t.load;
     s.popups.push({ x: t.x, y: t.y - 20, amount: t.load, life: POPUP_SECONDS * 2 });
+    // A share of every haul goes to the permanent stockpile.
+    s.salvageBanked += Math.round(t.load * cfg.salvage.shareOfHaul);
     if (t.outcome === "jackpot") {
       s.charge = 1;
-      truckNotice(s, `Jackpot! +${t.load} Supplies and a full charge`);
+      truckNotice(s, `Jackpot! +${t.load} and a full charge`);
     } else truckNotice(s, `Salvage unloaded · +${t.load} Supplies`);
-  } else truckNotice(s, "No luck this run · nothing to unload");
+  } else truckNotice(s, "No luck this run");
   t.runs++;
   resetTruck(s, cfg);
 }
@@ -469,6 +755,10 @@ export interface GameState {
   /** The boost running now, if any. */
   boost: { kind: BoostKind; left: number; total: number } | null;
   truck: Truck;
+  /** Permanent Salvage banked by this run's hauls so far (kept after defeat). */
+  salvageBanked: number;
+  /** Salvage from the stockpile turned into starting Supplies for this run. */
+  salvageUsed: number;
   /** Airstrike bombs still to land. */
   bombs: Bomb[];
   /** The bomber's pass, for drawing only: from, to, and progress. */
@@ -542,6 +832,8 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     bombs: [],
     flyover: null,
     truck: newTruck(cfg),
+    salvageBanked: 0,
+    salvageUsed: 0,
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,

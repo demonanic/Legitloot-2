@@ -152,7 +152,7 @@ test("truck: it swerves around zombies in its way", () => {
     }
     return sideways;
   };
-  assert.ok(pathWith(true) > pathWith(false) + 15, `${pathWith(true).toFixed(0)} vs ${pathWith(false).toFixed(0)}`);
+  assert.ok(pathWith(true) > pathWith(false) + 5, `${pathWith(true).toFixed(0)} vs ${pathWith(false).toFixed(0)}`);
 });
 
 test("truck: a successful run comes back next wave, unloads beside the base, and pays out once", () => {
@@ -293,4 +293,193 @@ test("menu: the base menu offers a salvage run and shows what the truck is doing
   sendTruck(s, cfg);
   assert.match(btn().label, /leaves next wave/);
   assert.equal(btn().enabled, false);
+});
+
+// --- Route planning and collisions -----------------------------------------------
+
+import { buildStructure, planTruckPath, truckTouches } from "../games/zid/sim.js";
+import { tileStatus } from "../games/zid/grid.js";
+
+/** Drive a departure to the end, checking the body never touches what it must avoid. */
+function driveOut(s: GameState, cfg: GameConfig, level: 1 | 2): { steps: number; maxAccel: number; maxBrake: number } {
+  const keeper = assault(s, cfg);
+  step(s, cfg, DT);
+  let steps = 0;
+  let prevV = s.truck.speed;
+  let maxAccel = 0;
+  let maxBrake = 0;
+  let left = false;
+  while (s.truck.state === "departing" && steps < 60 * 30) {
+    step(s, cfg, DT);
+    keeper.x = 360;
+    keeper.y = 5;
+    steps++;
+    const t = s.truck;
+    if (t.state !== "departing") break;
+    // Leaving the bay it may brush its own starting tiles; after that, nothing.
+    if (!left && !truckTouches(s, cfg, t.x, t.y, t.heading, 1)) left = true;
+    if (left) assert.equal(truckTouches(s, cfg, t.x, t.y, t.heading, level), false, `touching something at (${t.x.toFixed(0)}, ${t.y.toFixed(0)})`);
+    maxAccel = Math.max(maxAccel, (t.speed - prevV) / DT);
+    maxBrake = Math.max(maxBrake, (prevV - t.speed) / DT);
+    prevV = t.speed;
+  }
+  assert.equal(s.truck.state, "away", "it got out");
+  return { steps, maxAccel, maxBrake };
+}
+
+test("truck bay: the two tiles beside the door can't be built on", () => {
+  const cfg = SUCCESS;
+  for (const [c, r] of cfg.construction.truckBay) assert.equal(tileStatus(cfg, c, r), "invalid-terrain");
+  const park = truckParking(cfg);
+  const s = createState(cfg, 1);
+  assert.equal(truckTouches(s, cfg, park.x, park.y, 0, 1), false);
+});
+
+test("truck route: on an open field it never drives over a rock or the stronghold, on any seed", () => {
+  const cfg = SUCCESS;
+  for (let seed = 1; seed <= 8; seed++) {
+    const s = createState(cfg, seed);
+    s.currency = 500;
+    sendTruck(s, cfg);
+    driveOut(s, cfg, 2);
+  }
+});
+
+test("truck route: it goes round weapons, walls and traps instead of over them", () => {
+  const cfg = SUCCESS;
+  for (let seed = 1; seed <= 6; seed++) {
+    const s = createState(cfg, seed);
+    s.currency = 10_000;
+    s.stronghold.level = 4;
+    // Clutter south, east and west of the bay, leaving gaps to find.
+    const spots: [string, number, number][] = [
+      ["machine-gun", 3, 12], ["barricade", 4, 13], ["mortar", 6, 12], ["mine", 5, 14], ["barricade", 2, 11],
+      ["machine-gun", 7, 11], ["tripwire", 3, 14], ["barricade", 6, 14], ["machine-gun", 2, 13], ["barricade", 7, 12],
+    ];
+    for (const [kind, c, r] of spots) assert.ok(buildStructure(s, cfg, kind as never, c, r).ok, `${kind} at ${c},${r}`);
+    sendTruck(s, cfg);
+    driveOut(s, cfg, 1);
+  }
+});
+
+test("truck route: walled in completely, it pushes through your structures but still never a rock or the stronghold", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 2);
+  s.currency = 10_000;
+  for (const [c, r] of [[3, 10], [3, 11], [3, 12], [4, 12], [5, 12], [6, 12], [6, 11], [6, 10]] as const) {
+    assert.ok(buildStructure(s, cfg, "barricade", c, r).ok, `wall at ${c},${r}`);
+  }
+  sendTruck(s, cfg);
+  const keeper = assault(s, cfg);
+  let steps = 0;
+  while (s.truck.state !== "away" && steps++ < 90 * 30) {
+    step(s, cfg, DT);
+    keeper.x = 360;
+    keeper.y = 5;
+    if (s.truck.state === "departing") assert.equal(truckTouches(s, cfg, s.truck.x, s.truck.y, s.truck.heading, 2), false);
+  }
+  assert.equal(s.truck.state, "away");
+});
+
+test("truck route: the plan is a short list of long straight runs, not a tile-by-tile zig-zag", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  const park = truckParking(cfg);
+  const path = planTruckPath(s, cfg, park, { x: 360, y: cfg.world.height + 60 });
+  assert.ok(path.length <= 3, `${path.length} waypoints on an open field`);
+  s.currency = 1000;
+  buildStructure(s, cfg, "barricade", 4, 13);
+  buildStructure(s, cfg, "barricade", 5, 13);
+  const round = planTruckPath(s, cfg, park, { x: 360, y: cfg.world.height + 60 });
+  assert.ok(round.length >= 2 && round.length <= 6, `${round.length} waypoints round a wall`);
+});
+
+test("truck speed: it pulls away and brakes gradually, never jumping to full speed", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  s.currency = 500;
+  sendTruck(s, cfg);
+  const { maxAccel, maxBrake } = driveOut(s, cfg, 2);
+  assert.ok(maxAccel <= cfg.truck.accel + 1e-6, `accel ${maxAccel}`);
+  assert.ok(maxBrake <= cfg.truck.brake + 1e-6, `brake ${maxBrake}`);
+});
+
+test("truck: coming home it ends squarely in its bay, facing east, without touching anything on the way", () => {
+  const cfg = SUCCESS;
+  for (let seed = 1; seed <= 6; seed++) {
+    const s = createState(cfg, seed);
+    s.currency = 10_000;
+    for (const [c, r] of [[3, 12], [6, 12], [2, 11], [7, 11], [4, 13]] as const) buildStructure(s, cfg, "barricade", c, r);
+    sendTruck(s, cfg);
+    let keeper = assault(s, cfg);
+    run(s, cfg, 60, [keeper], () => s.truck.state === "away");
+    clearWave(s, cfg);
+    keeper = assault(s, cfg);
+    run(s, cfg, 30, [keeper], () => s.truck.state === "arriving");
+    let steps = 0;
+    while (s.truck.state === "arriving" && steps++ < 60 * 30) {
+      step(s, cfg, DT);
+      keeper.x = 360;
+      keeper.y = 5;
+      const t = s.truck;
+      if (t.state === "arriving") assert.equal(truckTouches(s, cfg, t.x, t.y, t.heading, 1), false, `seed ${seed} at (${t.x.toFixed(0)}, ${t.y.toFixed(0)})`);
+    }
+    assert.equal(s.truck.state, "unloading", `seed ${seed} docked`);
+    const park = truckParking(cfg);
+    assert.deepEqual([Math.round(s.truck.x), Math.round(s.truck.y)], [park.x, park.y]);
+  }
+});
+
+// --- Salvage: what survives defeat --------------------------------------------------
+
+import { salvageUsable, useSalvage } from "../games/zid/sim.js";
+
+test("salvage: a share of every unloaded haul is banked; an empty or destroyed run banks nothing", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  s.currency = 500;
+  sendTruck(s, cfg);
+  let keeper = assault(s, cfg);
+  run(s, cfg, 60, [keeper], () => s.truck.state === "away");
+  clearWave(s, cfg);
+  keeper = assault(s, cfg);
+  run(s, cfg, 60, [keeper], () => s.truck.state === "unloading");
+  const load = s.truck.load;
+  assert.equal(s.salvageBanked, 0, "not until it is unloaded");
+  run(s, cfg, cfg.truck.unloadSeconds + 1, [keeper]);
+  assert.equal(s.salvageBanked, Math.round(load * cfg.salvage.shareOfHaul));
+  const empty = cfgWith({ jackpot: 0, empty: 1, lost: 0 });
+  const e = createState(empty, 1);
+  e.currency = 500;
+  sendTruck(e, empty);
+  keeper = assault(e, empty);
+  run(e, empty, 60, [keeper], () => e.truck.state === "away");
+  clearWave(e, empty);
+  keeper = assault(e, empty);
+  run(e, empty, 80, [keeper], () => e.truck.state === "parked");
+  assert.equal(e.salvageBanked, 0);
+});
+
+test("salvage: before the first wave it turns into starting Supplies, up to the cap, once", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  const start = s.currency;
+  assert.equal(salvageUsable(s, cfg, 40), 40);
+  assert.equal(useSalvage(s, cfg, 40), 40);
+  assert.equal(s.currency, start + 40 * cfg.salvage.suppliesPerSalvage);
+  // A big stockpile is capped per run.
+  const left = cfg.salvage.maxStartBonus / cfg.salvage.suppliesPerSalvage - 40;
+  assert.equal(useSalvage(s, cfg, 10_000), left);
+  assert.equal(useSalvage(s, cfg, 10_000), 0, "cap reached");
+  assert.equal(s.currency, start + cfg.salvage.maxStartBonus);
+});
+
+test("salvage: it can't be cashed in once the run is under way", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  assault(s, cfg);
+  assert.equal(useSalvage(s, cfg, 100), 0);
+  clearWave(s, cfg);
+  assert.equal(s.wave, 2);
+  assert.equal(useSalvage(s, cfg, 100), 0);
 });

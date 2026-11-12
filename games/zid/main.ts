@@ -27,6 +27,7 @@ import {
   step,
   structureAt,
   sendTruck,
+  useSalvage,
   upgradeBase,
   upgradeTurret,
   type GameState,
@@ -58,7 +59,25 @@ function savedRanges(): boolean {
     return true;
   }
 }
-const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons", showRanges: savedRanges() };
+/** The permanent Salvage stockpile lives in the browser, so it survives defeat and closing the page. */
+function loadSalvage(): number {
+  try {
+    const n = Number(localStorage.getItem("zid.salvage"));
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  } catch {
+    return 0;
+  }
+}
+function saveSalvage(n: number): void {
+  try {
+    localStorage.setItem("zid.salvage", String(n));
+  } catch {
+    // Storage unavailable: the stockpile just lasts for this visit.
+  }
+}
+const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons", showRanges: savedRanges(), salvage: loadSalvage() };
+/** Salvage this run has already added to the stockpile. */
+let salvageSaved = 0;
 let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
@@ -134,6 +153,14 @@ function runPanelAction(action: PanelAction): void {
 
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
+  useSalvage: () => {
+    const spent = useSalvage(state, cfg, view.salvage);
+    if (spent > 0) {
+      view.salvage -= spent;
+      saveSalvage(view.salvage);
+      toast(`+${spent * cfg.salvage.suppliesPerSalvage} Supplies from your Salvage`);
+    }
+  },
   boost: (kind) => {
     const res = activateBoost(state, cfg, kind);
     if (!res.ok) {
@@ -153,6 +180,7 @@ const regions = uiRegions(cfg, () => state, () => view, {
   panel: (action) => runPanelAction(action),
   restart: () => {
     state = newRun();
+    salvageSaved = 0;
     view.toast = null;
     view.selected = null;
     view.recycleArmedUntil = 0;
@@ -215,6 +243,12 @@ const loop = createLoop({
   stepHz: 30,
   update: (dt) => {
     step(state, cfg, dt);
+    // Bank Salvage the moment a haul is unloaded, so it is safe whatever happens next.
+    if (!stress && state.salvageBanked > salvageSaved) {
+      view.salvage += state.salvageBanked - salvageSaved;
+      salvageSaved = state.salvageBanked;
+      saveSalvage(view.salvage);
+    }
     if (state.phase === "lost") view.selected = null;
     else if (state.phase === "wave" && view.selected) {
       // Only things that can be repaired stay selected once the assault starts.

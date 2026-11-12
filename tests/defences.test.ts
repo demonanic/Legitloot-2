@@ -23,7 +23,8 @@ import {
   type Structure,
 } from "../games/zid/sim.js";
 
-const cfg = baseConfig;
+// Pathing tests wall the stronghold in completely, so they run without the truck bay (which nothing can be built on).
+const cfg = { ...baseConfig, construction: { ...baseConfig.construction, truckBay: [] } };
 const DT = 1 / 30;
 
 /** Prep state with plenty of supplies. */

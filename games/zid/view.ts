@@ -17,6 +17,7 @@ import {
   barrelSpacing,
   lastBarrel,
   SPLAT_SECONDS,
+  salvageUsable,
   BOOST_KINDS,
   boostUnlocked,
   boostUnlockLevel,
@@ -82,6 +83,8 @@ export interface ViewState {
   buildPage: BuildPage;
   /** Draw the faint range ring around every weapon. The selected weapon's ring always shows. */
   showRanges: boolean;
+  /** The permanent Salvage stockpile (kept between runs), for the HUD and end screen. */
+  salvage: number;
 }
 
 export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
@@ -112,6 +115,8 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
 
 export interface UiActions {
   startNow(): void;
+  /** Turn stockpiled Salvage into starting Supplies (first wave only). */
+  useSalvage(): void;
   /** Spend the full charge meter on a boost. */
   boost(kind: BoostKind): void;
   /** Run a bottom-menu action for the selected tile. */
@@ -127,6 +132,7 @@ export function buttonRects(cfg: GameConfig) {
   const h = cfg.world.height;
   return {
     startNow: { x: w / 2 - 150, y: h - 132, w: 300, h: 76 },
+    useSalvage: { x: w / 2 - 230, y: h - 262, w: 460, h: 68 },
     slots: {
       a0: { x: 40, y: h - 316, w: 310, h: 76 },
       b0: { x: 370, y: h - 316, w: 310, h: 76 },
@@ -178,6 +184,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   return [
     rectRegion("panel", r.panel, () => true, selecting),
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
+    rectRegion("use-salvage", r.useSalvage, () => act.useSalvage(), () => !selecting() && salvageUsable(getState(), cfg, getView().salvage) > 0),
     ...BOOST_KINDS.map((k) => rectRegion(`boost-${k}`, r.boosts[k], () => act.boost(k), boostReady)),
     slotRegion("a0"),
     slotRegion("b0"),
@@ -273,6 +280,28 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   // Invalid terrain (placeholder rocks).
+  // The truck's parking bay beside the door: hazard-striped outline and a "P".
+  if (cfg.construction.truckBay.length > 0) {
+    const t = cfg.construction.tileSize;
+    const xs = cfg.construction.truckBay.map(([c]) => cfg.construction.origin.x + c * t);
+    const ys = cfg.construction.truckBay.map(([, r]) => cfg.construction.origin.y + r * t);
+    const bx = Math.min(...xs);
+    const by = Math.min(...ys);
+    const bw = Math.max(...xs) + t - bx;
+    const bh = Math.max(...ys) + t - by;
+    ctx.fillStyle = "rgba(60,62,56,0.55)";
+    ctx.fillRect(bx + 6, by + 8, bw - 12, bh - 16);
+    ctx.strokeStyle = "rgba(214,168,74,0.7)";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([12, 8]);
+    ctx.strokeRect(bx + 6, by + 8, bw - 12, bh - 16);
+    ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(214,168,74,0.35)";
+    ctx.font = "800 26px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("P", bx + bw - 22, by + bh / 2 + 1);
+  }
   for (const [col, row] of cfg.construction.invalidTerrain) {
     const c = tileCenter(cfg, col, row);
     ctx.fillStyle = C.rock;
@@ -671,7 +700,12 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.textAlign = "left";
   ctx.fillStyle = C.text;
   ctx.font = "800 30px system-ui, sans-serif";
-  ctx.fillText(`${cfg.currencyLabel} ${s.currency}`, 20, 40);
+  ctx.fillText(`${cfg.currencyLabel} ${s.currency}`, 20, view.salvage > 0 ? 30 : 40);
+  if (view.salvage > 0) {
+    ctx.fillStyle = C.coin;
+    ctx.font = "700 17px system-ui, sans-serif";
+    ctx.fillText(`Salvage ${view.salvage}`, 20, 60);
+  }
   ctx.textAlign = "center";
   let status = "";
   let color = C.text;
@@ -763,6 +797,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.font = "700 24px system-ui, sans-serif";
     ctx.fillText("Tap a tile to build, or anything you built to manage it", W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
+    const usable = salvageUsable(s, cfg, view.salvage);
+    if (usable > 0) button(ctx, r.useSalvage, `Use ${usable} Salvage · +${usable * cfg.salvage.suppliesPerSalvage} Supplies`);
   }
   if (!sel && s.phase !== "lost") drawChargeMeter(ctx, cfg, s, r);
 
@@ -802,6 +838,13 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText(`Waves cleared ${s.wavesCleared}`, W / 2, H / 2 - 30);
     ctx.fillText(`Kills ${s.kills}`, W / 2, H / 2 + 14);
     ctx.fillText(`Time ${clock(s.time)}`, W / 2, H / 2 + 58);
+    ctx.fillStyle = C.coin;
+    ctx.font = "700 24px system-ui, sans-serif";
+    ctx.fillText(
+      s.salvageBanked > 0 ? `Salvage kept +${s.salvageBanked} · stockpile ${view.salvage}` : view.salvage > 0 ? `Salvage stockpile ${view.salvage}` : "Send salvage runs to keep something after defeat",
+      W / 2,
+      H / 2 + 108,
+    );
     button(ctx, r.restart, "Play again");
   }
 }

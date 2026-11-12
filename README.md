@@ -37,6 +37,14 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Truck routing and permanent Salvage
+
+- **The truck goes round things.** It plans a route across the grid around rocks, the stronghold and everything you built (rubble and traps included), then straightens it into long runs and wide corners. Collisions use each thing's real footprint. If you wall it in completely it pushes through as few of your structures as it can, never a rock or the stronghold.
+- **Smoother driving:** it pulls away and brakes gradually, slows for corners, lines itself up in its bay while waiting, and rolls the last few metres straight into the bay. Zombies it reaches are shouldered aside rather than driven through.
+- **Parking bay:** the two tiles below the door are reserved for the truck and can't be built on.
+- **What survives defeat:** 20% of every haul unloaded is banked as permanent **Salvage**, saved in the browser the moment it is unloaded. Run Supplies are still lost on defeat. Before the first wave of a later run, one tap turns stockpiled Salvage into extra starting Supplies (1 for 1, up to 150 per run).
+- The balance target band is now waves 10 to 18.
+
 ### Salvage runs
 
 - **Send a run** from the base menu between waves (60 Supplies). The truck idles beside the base and drives out when the assault starts.

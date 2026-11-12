@@ -65,6 +65,11 @@ export function overlapsStronghold(cfg: GameConfig, col: number, row: number): b
   return x0 < sh.x + sh.halfSize && x0 + t > sh.x - sh.halfSize && y0 < sh.y + sh.halfSize && y0 + t > sh.y - sh.halfSize;
 }
 
+/** The parking bay beside the door: kept clear so the salvage truck always has somewhere to stop. */
+export function isTruckBay(cfg: GameConfig, col: number, row: number): boolean {
+  return cfg.construction.truckBay.some(([tc, tr]) => tc === col && tr === row);
+}
+
 /** Terrain status of a tile, ignoring anything built on it. */
 export function tileStatus(cfg: GameConfig, col: number, row: number): TileStatus {
   const { cols, rows } = gridSize(cfg);
@@ -75,6 +80,7 @@ export function tileStatus(cfg: GameConfig, col: number, row: number): TileStatu
   if (!pointInPolygon(c.x, c.y, cfg.construction.perimeter)) return "outside-perimeter";
   if (overlapsStronghold(cfg, col, row)) return "invalid-terrain";
   if (cfg.construction.invalidTerrain.some(([tc, tr]) => tc === col && tr === row)) return "invalid-terrain";
+  if (isTruckBay(cfg, col, row)) return "invalid-terrain";
   return "buildable";
 }
 

@@ -102,8 +102,17 @@ export interface GameConfig {
     perimeter: [number, number][];
     /** Tiles inside the boundary that cannot be built on (placeholder terrain), as [col, row]. */
     invalidTerrain: [number, number][];
+    /** Tiles kept clear beside the door for the salvage truck to park on. Nothing can be built there. */
+    truckBay: [number, number][];
   };
   economy: { startCurrency: number };
+  /**
+   * Salvage: the permanent stockpile that survives defeat. It comes only from
+   * salvage runs (a share of every haul unloaded) and can be turned into extra
+   * starting Supplies at the beginning of a later run, up to a cap per run.
+   * Run Supplies themselves are always lost on defeat.
+   */
+  salvage: { shareOfHaul: number; suppliesPerSalvage: number; maxStartBonus: number };
   turret: {
     cost: number;
     range: number;
@@ -281,6 +290,9 @@ export interface GameConfig {
     speed: number;
     /** Radians per second it can turn; it slows down in tight turns. */
     turnRate: number;
+    /** How quickly it picks up speed and how hard it can brake, per second. */
+    accel: number;
+    brake: number;
     length: number;
     width: number;
     /** Zombies this close to it go for the truck instead of the base. */
@@ -336,6 +348,10 @@ export const baseConfig: GameConfig = {
       [180, 165], [360, 105], [545, 160], [665, 420], [625, 640], [665, 860],
       [560, 1135], [360, 1175], [185, 1120], [55, 860], [95, 640], [55, 420],
     ],
+    truckBay: [
+      [4, 11],
+      [5, 11],
+    ],
     invalidTerrain: [
       [2, 7],
       [7, 13],
@@ -343,6 +359,7 @@ export const baseConfig: GameConfig = {
     ],
   },
   economy: { startCurrency: 100 },
+  salvage: { shareOfHaul: 0.2, suppliesPerSalvage: 1, maxStartBonus: 150 },
   turret: { cost: 50, range: 174, fireRate: 5, damage: 4, projectileSpeed: 574, radius: 18, maxHp: 120 },
   mortar: {
     cost: 80,
@@ -438,6 +455,8 @@ export const baseConfig: GameConfig = {
     maxHp: 260,
     speed: 95,
     turnRate: 2.4,
+    accel: 70,
+    brake: 150,
     length: 72,
     width: 32,
     aggroRadius: 110,
@@ -453,7 +472,7 @@ export const baseConfig: GameConfig = {
     airstrike: { bombs: 9, spacing: 95, radius: 100, warnSeconds: 1.2, interval: 0.16, damageWalkers: 3, unlockBase: 2 },
     shield: { seconds: 6, regenPerSecond: 0.04, unlockBase: 3 },
   },
-  balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 15 },
+  balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 18 },
 };
 
 /**

@@ -37,6 +37,14 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Salvage runs
+
+- **Send a run** from the base menu between waves (60 Supplies). The truck idles beside the base and drives out when the assault starts.
+- **It is a real vehicle:** it steers toward its exit at a limited turn rate, so it curves, slows in tight turns and swerves around zombies in its way. Zombies within reach chase and attack it while it leaves, while it returns and while it unloads.
+- **Away for one wave.** What happens off screen is rolled as it leaves the field: a normal haul (60%), a jackpot that doubles the haul and fills the charge meter (10%), nothing found (20%), or the crew never returns (10%).
+- **Back during the next assault:** it drives in from an edge, parks by the door and takes 8 seconds to unload. Supplies are paid only when unloading finishes; if the truck is destroyed first, the load is lost. A destroyed or lost truck is replaced after the wave.
+- A normal haul is 130 to 190 Supplies plus 8 per wave reached.
+
 ### Airstrike, force field, shotgun, flamethrower
 
 - **Four boosts** on the charge meter. Overdrive and Bounty from the start; **Airstrike** at base level 2; **Force field** at base level 3. Locked ones show the level they need.

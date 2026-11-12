@@ -26,6 +26,7 @@ import {
   buildLimit,
   countKind,
   checkBaseUpgrade,
+  checkSendTruck,
   nextBaseUpgradeCost,
   type UpgradePathId,
   type StructureKind,
@@ -43,6 +44,7 @@ export type PanelAction =
   | { kind: "page"; page: BuildPage }
   | { kind: "upgrade"; path: UpgradePathId }
   | { kind: "upgrade-base" }
+  | { kind: "send-truck" }
   | { kind: "reinforce" }
   | { kind: "repair" }
   | { kind: "recycle" }
@@ -113,6 +115,21 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
           label: upCost === null ? "Base MAX" : `Upgrade base · ${upCost}`,
           enabled: checkBaseUpgrade(s, cfg) === null,
           action: { kind: "upgrade-base" },
+        },
+        {
+          slot: "a1",
+          label:
+            s.truck.state === "parked"
+              ? `Salvage run · ${cfg.truck.cost}`
+              : s.truck.state === "queued"
+                ? "Truck leaves next wave"
+                : s.truck.state === "wrecked"
+                  ? "Truck lost · new one next wave"
+                  : s.truck.state === "away"
+                    ? "Truck is away"
+                    : "Truck is busy",
+          enabled: checkSendTruck(s, cfg) === null,
+          action: { kind: "send-truck" },
         },
         close,
       ],

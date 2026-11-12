@@ -268,6 +268,34 @@ export interface GameConfig {
    * during an assault. Overdrive speeds every weapon up; Bounty multiplies
    * Supplies from kills. No charge builds while a boost is running.
    */
+  /**
+   * The salvage truck. Queue a run between waves; it drives out when the
+   * assault starts, is away for the rest of that wave, comes back during the
+   * next one and unloads beside the stronghold. Zombies near it attack it on
+   * the way out, on the way back and while it unloads; if it is destroyed the
+   * load is lost. What happens off screen is rolled when it leaves the field.
+   */
+  truck: {
+    cost: number;
+    maxHp: number;
+    speed: number;
+    /** Radians per second it can turn; it slows down in tight turns. */
+    turnRate: number;
+    length: number;
+    width: number;
+    /** Zombies this close to it go for the truck instead of the base. */
+    aggroRadius: number;
+    unloadSeconds: number;
+    /** Seconds into the next assault before it reappears, rolled in this range. */
+    returnMin: number;
+    returnMax: number;
+    /** Supplies brought back on a normal success: rolled in this range, plus `loadPerWave` per wave reached. */
+    loadMin: number;
+    loadMax: number;
+    loadPerWave: number;
+    /** Chances of the other outcomes; the rest are normal successes. A jackpot doubles the load and fills the charge meter. */
+    odds: { jackpot: number; empty: number; lost: number };
+  };
   boost: {
     killsToFill: number;
     overdrive: { seconds: number; fireRate: number };
@@ -405,6 +433,22 @@ export const baseConfig: GameConfig = {
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
   pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.55, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
+  truck: {
+    cost: 60,
+    maxHp: 260,
+    speed: 95,
+    turnRate: 2.4,
+    length: 72,
+    width: 32,
+    aggroRadius: 110,
+    unloadSeconds: 8,
+    returnMin: 4,
+    returnMax: 12,
+    loadMin: 130,
+    loadMax: 190,
+    loadPerWave: 8,
+    odds: { jackpot: 0.1, empty: 0.2, lost: 0.1 },
+  },
   boost: { killsToFill: 90, overdrive: { seconds: 8, fireRate: 2 }, bounty: { seconds: 12, drops: 3 },
     airstrike: { bombs: 9, spacing: 95, radius: 100, warnSeconds: 1.2, interval: 0.16, damageWalkers: 3, unlockBase: 2 },
     shield: { seconds: 6, regenPerSecond: 0.04, unlockBase: 3 },

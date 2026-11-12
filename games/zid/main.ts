@@ -26,6 +26,7 @@ import {
   startWaveNow,
   step,
   structureAt,
+  sendTruck,
   upgradeBase,
   upgradeTurret,
   type GameState,
@@ -100,6 +101,12 @@ function runPanelAction(action: PanelAction): void {
     case "upgrade":
       if (st) report(upgradeTurret(state, cfg, st.id, action.path));
       return;
+    case "send-truck": {
+      const res = sendTruck(state, cfg);
+      if (res.ok) toast("Salvage run paid for · the truck leaves when the wave starts");
+      else if (res.reason === "insufficient-funds") toast(MANAGE_MESSAGES["insufficient-funds"]);
+      return;
+    }
     case "upgrade-base":
       report(upgradeBase(state, cfg));
       return;

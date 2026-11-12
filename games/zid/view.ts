@@ -423,6 +423,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   // Zombies: walkers (olive), runners (small, pale), brutes (large, dark).
+  drawTruck(ctx, cfg, s);
+
   for (const e of s.enemies) {
     const r = cfg.enemies[e.type].radius;
     ctx.fillStyle = e.attacking ? C.walkerAttack : e.type === "runner" ? C.runner : e.type === "brute" ? C.brute : C.walker;
@@ -1664,4 +1666,157 @@ function drawFlamer(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState
   ctx.arc(sl.x + cos * (r + 9), sl.y + sin * (r + 9), firing ? 5 : 2.5, 0, Math.PI * 2);
   ctx.fill();
   if (!firing) drawSmoke(ctx, s, sl.x + cos * (r + 8), sl.y + sin * (r + 8), t.lastShot, 1.2, 5);
+}
+
+/**
+ * The salvage truck, drawn to scale and turned to its heading: cab, cargo bed
+ * (crates when loaded), wheels that steer, headlights, dust while moving,
+ * smoke when damaged, and crates being carried in while it unloads.
+ */
+function drawTruck(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
+  const t = s.truck;
+  if (t.state === "away" || t.state === "wrecked") return;
+  const c = cfg.truck;
+  const L = c.length;
+  const Wd = c.width;
+  const moving = t.speed > 5;
+  const exposed = t.state === "departing" || t.state === "arriving" || t.state === "unloading";
+  // Dust kicked up behind the wheels.
+  if (moving) {
+    for (let i = 0; i < 5; i++) {
+      const k = ((s.time * 2.5 + i * 0.2) % 1 + 1) % 1;
+      const back = L / 2 + k * 46;
+      const side = (hash01(7, i) - 0.5) * Wd;
+      ctx.fillStyle = `rgba(150,140,118,${(0.35 * (1 - k)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(t.x - Math.cos(t.heading) * back - Math.sin(t.heading) * side, t.y - Math.sin(t.heading) * back + Math.cos(t.heading) * side, 5 + k * 12, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.save();
+  ctx.translate(t.x, t.y);
+  ctx.rotate(t.heading);
+  // Headlights: two soft cones ahead while it drives.
+  if (moving) {
+    ctx.fillStyle = "rgba(255,240,180,0.12)";
+    for (const sy of [-Wd / 3, Wd / 3]) {
+      ctx.beginPath();
+      ctx.moveTo(L / 2, sy);
+      ctx.lineTo(L / 2 + 90, sy - 26);
+      ctx.lineTo(L / 2 + 90, sy + 26);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+  // Shadow.
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(-L / 2 + 4, -Wd / 2 + 5, L, Wd);
+  // Wheels: rear pair fixed, front pair turned toward where it is steering.
+  let steer = Math.atan2(t.ty - t.y, t.tx - t.x) - t.heading;
+  steer = Math.max(-0.5, Math.min(0.5, Math.atan2(Math.sin(steer), Math.cos(steer))));
+  ctx.fillStyle = "#1b1c1a";
+  for (const [wx, front] of [[-L / 2 + 14, false], [-L / 2 + 30, false], [L / 2 - 16, true]] as const) {
+    for (const wy of [-Wd / 2 - 1, Wd / 2 + 1]) {
+      ctx.save();
+      ctx.translate(wx, wy);
+      if (front && moving) ctx.rotate(steer);
+      ctx.fillRect(-7, -3.5, 14, 7);
+      ctx.restore();
+    }
+  }
+  // Cargo bed with slatted sides.
+  ctx.fillStyle = "#5d6652";
+  ctx.strokeStyle = "#20231d";
+  ctx.lineWidth = 2.5;
+  ctx.fillRect(-L / 2, -Wd / 2, L * 0.62, Wd);
+  ctx.strokeRect(-L / 2, -Wd / 2, L * 0.62, Wd);
+  ctx.strokeStyle = "rgba(20,22,18,0.5)";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 1; i < 4; i++) {
+    ctx.moveTo(-L / 2 + (L * 0.62 * i) / 4, -Wd / 2);
+    ctx.lineTo(-L / 2 + (L * 0.62 * i) / 4, Wd / 2);
+  }
+  ctx.stroke();
+  // Crates: full when it comes back loaded, emptying as it unloads.
+  const crates = t.load > 0 ? (t.state === "unloading" ? Math.ceil(6 * (t.timer / c.unloadSeconds)) : 6) : 0;
+  for (let i = 0; i < crates; i++) {
+    const cx = -L / 2 + 6 + (i % 3) * 13;
+    const cy = -Wd / 2 + 4 + Math.floor(i / 3) * 13;
+    ctx.fillStyle = i % 2 === 0 ? "#b98d4e" : "#a37a40";
+    ctx.strokeStyle = "#4a3516";
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(cx, cy, 11, 11);
+    ctx.strokeRect(cx, cy, 11, 11);
+  }
+  // Cab, windscreen, roof light.
+  const cabX = -L / 2 + L * 0.64;
+  ctx.fillStyle = "#b9853a";
+  ctx.strokeStyle = "#20231d";
+  ctx.lineWidth = 2.5;
+  roundRect(ctx, cabX, -Wd / 2 + 1, L * 0.36, Wd - 2, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#9fd0e6";
+  ctx.fillRect(cabX + L * 0.2, -Wd / 2 + 5, 7, Wd - 10);
+  ctx.fillStyle = moving && Math.sin(s.time * 12) > 0 ? "#ffd65a" : "#8a6a1c";
+  ctx.beginPath();
+  ctx.arc(cabX + 9, 0, 3.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Bull bar.
+  ctx.strokeStyle = "#2a2c29";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(L / 2 + 2, -Wd / 2 + 3);
+  ctx.lineTo(L / 2 + 2, Wd / 2 - 3);
+  ctx.stroke();
+  ctx.restore();
+  // Unloading: crates carried up to the door, and a progress ring.
+  if (t.state === "unloading") {
+    const sh = s.stronghold;
+    for (let i = 0; i < 3; i++) {
+      const k = ((s.time * 0.9 + i / 3) % 1 + 1) % 1;
+      const x = t.x - 14 + (sh.x - (t.x - 14)) * k;
+      const y = t.y - 8 + (sh.y + sh.halfSize - 6 - (t.y - 8)) * k - Math.sin(Math.PI * k) * 6;
+      ctx.fillStyle = "#b98d4e";
+      ctx.strokeStyle = "#4a3516";
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(x - 5, y - 5, 10, 10);
+      ctx.strokeRect(x - 5, y - 5, 10, 10);
+    }
+    ctx.strokeStyle = C.coin;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, L / 2 + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (1 - t.timer / c.unloadSeconds));
+    ctx.stroke();
+    ctx.font = "800 16px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(10,11,10,0.9)";
+    ctx.strokeText(`UNLOADING ${Math.ceil(t.timer)}s`, t.x, t.y + Wd / 2 + 22);
+    ctx.fillStyle = C.coin;
+    ctx.fillText(`UNLOADING ${Math.ceil(t.timer)}s`, t.x, t.y + Wd / 2 + 22);
+  }
+  if (t.state === "queued") {
+    // Engine idling: a little exhaust, so it's clear a run is paid for.
+    const k = (s.time * 1.2) % 1;
+    ctx.fillStyle = `${C.smoke}${(0.4 * (1 - k)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(t.x - L / 2 - 4 - k * 14, t.y + 8, 4 + k * 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Health bar when hurt; black smoke from the bonnet when badly hurt.
+  if (exposed && t.hp < t.maxHp) {
+    bar(ctx, t.x - 30, t.y - Wd / 2 - 16, 60, 6, Math.max(0, t.hp / t.maxHp), t.hp / t.maxHp > 0.35 ? C.warn : C.bad);
+    if (t.hp / t.maxHp < 0.5) {
+      for (let i = 0; i < 3; i++) {
+        const k = ((s.time * 0.9 + i / 3) % 1 + 1) % 1;
+        ctx.fillStyle = `rgba(40,40,38,${(0.55 * (1 - k)).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(t.x + Math.cos(t.heading) * (L / 2 - 8), t.y + Math.sin(t.heading) * (L / 2 - 8) - k * 40, 6 + k * 10, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
 }

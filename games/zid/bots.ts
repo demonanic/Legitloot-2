@@ -30,6 +30,7 @@ import {
   nextBaseUpgradeCost,
   collectPickup,
   activateBoost,
+  sendTruck,
 } from "./sim.js";
 
 export interface Player {
@@ -91,6 +92,8 @@ function placeTraps(s: GameState, cfg: GameConfig): void {
 export const sensiblePlayer: Player = (s, cfg) => {
   for (const st of s.structures) if (st.destroyed || st.hp < st.maxHp) repair(s, cfg, { kind: "structure", id: st.id });
   if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
+  // A salvage run pays for itself more often than not: send one whenever there is slack.
+  if (s.wave >= 3 && s.currency >= cfg.truck.cost + 80) sendTruck(s, cfg);
   // Chase unlocks: once the defence is up to strength, a base upgrade that
   // brings a new weapon comes before turret upgrades, if Supplies are left over.
   const nextLevel = s.stronghold.level + 2;

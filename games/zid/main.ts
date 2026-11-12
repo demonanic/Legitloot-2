@@ -27,6 +27,8 @@ import {
   step,
   structureAt,
   sendTruck,
+  addSurvivor,
+  survivorDef,
   useSalvage,
   upgradeBase,
   upgradeTurret,
@@ -50,6 +52,16 @@ const renderer = createRenderer(canvas, {
   background: "#0d0e0d",
 });
 
+/** Survivors unlocked for good, kept in the browser alongside the Salvage stockpile. */
+function loadSurvivors(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem("zid.survivors") ?? "[]");
+    return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+const unlockedSurvivors: string[] = loadSurvivors();
 let state: GameState = newRun();
 // The build menu remembers its last page, so placing several traps in a row is quick.
 function savedRanges(): boolean {
@@ -82,7 +94,7 @@ let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
   const seed = fixedSeed ?? (Date.now() & 0x7fffffff);
-  return stress ? createStressRun(cfg, seed) : createState(cfg, seed);
+  return stress ? createStressRun(cfg, seed) : createState(cfg, seed, { survivors: unlockedSurvivors });
 }
 
 function toast(text: string): void {
@@ -111,6 +123,21 @@ function runPanelAction(action: PanelAction): void {
     case "page":
       view.buildPage = action.page;
       return;
+    case "unlock-survivor": {
+      const def = survivorDef(cfg, action.id);
+      if (!def || unlockedSurvivors.includes(def.id) || view.salvage < def.cost) return;
+      view.salvage -= def.cost;
+      saveSalvage(view.salvage);
+      unlockedSurvivors.push(def.id);
+      try {
+        localStorage.setItem("zid.survivors", JSON.stringify(unlockedSurvivors));
+      } catch {
+        // Storage unavailable: the unlock just lasts for this visit.
+      }
+      addSurvivor(state, cfg, def.id);
+      toast(`${def.name} the ${def.role} joins you for good`);
+      return;
+    }
     case "build": {
       const res = buildStructure(state, cfg, action.structure, sel.col, sel.row);
       if (res.ok) view.selected = null;
@@ -249,6 +276,8 @@ const loop = createLoop({
       salvageSaved = state.salvageBanked;
       saveSalvage(view.salvage);
     }
+    // The survivors page is only reached from the base menu; start from the main page next time.
+    if (view.selected === null && view.buildPage === "survivors") view.buildPage = "weapons";
     if (state.phase === "lost") view.selected = null;
     else if (state.phase === "wave" && view.selected) {
       // Only things that can be repaired stay selected once the assault starts.

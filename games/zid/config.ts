@@ -38,6 +38,30 @@ export interface BaseLevel {
   maxHp: number;
 }
 
+export type SurvivorPerk = "collector" | "marksman" | "mechanic";
+export interface SurvivorDef {
+  id: string;
+  name: string;
+  role: string;
+  /** Permanent Salvage to unlock, once. */
+  cost: number;
+  maxHp: number;
+  speed: number;
+  range: number;
+  fireRate: number;
+  /** Damage per bullet (per pellet when `pellets` > 1). */
+  damage: number;
+  pellets: number;
+  /**
+   * collector: runs to pickups and grabs them. marksman: picks the toughest
+   * target and does `perkValue` times damage to brutes. mechanic: repairs the
+   * stronghold by `perkValue` health per second while near it.
+   */
+  perk: SurvivorPerk;
+  perkValue: number;
+  perkText: string;
+}
+
 export interface UpgradePath {
   /** Cost of each level; the array length is the maximum level. */
   costs: number[];
@@ -113,6 +137,29 @@ export interface GameConfig {
    * Run Supplies themselves are always lost on defeat.
    */
   salvage: { shareOfHaul: number; suppliesPerSalvage: number; maxStartBonus: number };
+  /**
+   * Survivors: fighters unlocked for good with permanent Salvage. They act on
+   * their own: hold a post near the stronghold, shoot what comes in range,
+   * keep their distance, and fall back to the door to recover when badly
+   * hurt. Zombies that get close attack them. One who goes down is out until
+   * the next wave. Once per run, if the stronghold would fall while a
+   * survivor is still standing, they make a last stand instead.
+   */
+  survivors: {
+    /** How far from the stronghold's centre they will roam. */
+    leash: number;
+    /** Zombies this close to a survivor go for them. */
+    aggroRadius: number;
+    /** Below this share of health they fall back to the door. */
+    retreatBelow: number;
+    /** Health regained per second while sheltering at the door. */
+    regenPerSecond: number;
+    /** Extra damage per base level above the first (0.35 = +35% each). */
+    damagePerBaseLevel: number;
+    projectileSpeed: number;
+    lastStand: { healShare: number; shieldSeconds: number };
+    roster: SurvivorDef[];
+  };
   turret: {
     cost: number;
     range: number;
@@ -360,6 +407,20 @@ export const baseConfig: GameConfig = {
   },
   economy: { startCurrency: 100 },
   salvage: { shareOfHaul: 0.2, suppliesPerSalvage: 1, maxStartBonus: 150 },
+  survivors: {
+    leash: 190,
+    aggroRadius: 55,
+    retreatBelow: 0.35,
+    regenPerSecond: 6,
+    damagePerBaseLevel: 0.35,
+    projectileSpeed: 640,
+    lastStand: { healShare: 0.25, shieldSeconds: 5 },
+    roster: [
+      { id: "scout", name: "Ray", role: "Scout", cost: 60, maxHp: 90, speed: 92, range: 150, fireRate: 4, damage: 3, pellets: 1, perk: "collector", perkValue: 0, perkText: "Grabs pickups for you" },
+      { id: "marksman", name: "Dutch", role: "Marksman", cost: 120, maxHp: 110, speed: 62, range: 240, fireRate: 0.9, damage: 22, pellets: 1, perk: "marksman", perkValue: 1.5, perkText: "Hunts brutes, +50% damage to them" },
+      { id: "mechanic", name: "Patch", role: "Mechanic", cost: 180, maxHp: 150, speed: 66, range: 120, fireRate: 1.1, damage: 5, pellets: 5, perk: "mechanic", perkValue: 1.2, perkText: "Shotgun; repairs the base as she fights" },
+    ],
+  },
   turret: { cost: 50, range: 174, fireRate: 5, damage: 4, projectileSpeed: 574, radius: 18, maxHp: 120 },
   mortar: {
     cost: 80,

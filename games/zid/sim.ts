@@ -5,7 +5,7 @@
  * the state after N steps is identical. All state is plain JSON.
  */
 
-import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig } from "./config.js";
+import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig, type SurvivorDef } from "./config.js";
 import { buildableTiles, gridSize, overlapsStronghold, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
@@ -140,6 +140,241 @@ export interface Pickup {
   /** Supplies given (0 for health). */
   amount: number;
   life: number;
+}
+
+export interface Survivor {
+  /** Matches a roster entry in config. */
+  id: string;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+  /** Downed survivors are out of the fight until the next wave. */
+  downed: boolean;
+  /** Sheltering at the door to recover. */
+  retreating: boolean;
+  cooldown: number;
+  /** Radians; where they are pointing. */
+  aim: number;
+  lastShot: number;
+  targetId: number | null;
+  /** True while their feet are moving, for the walk animation. */
+  moving: boolean;
+  kills: number;
+}
+
+export function survivorDef(cfg: GameConfig, id: string): SurvivorDef | null {
+  return cfg.survivors.roster.find((d) => d.id === id) ?? null;
+}
+
+/** A survivor's post: spread evenly round the stronghold, just outside its walls. */
+function survivorPost(s: GameState, cfg: GameConfig, index: number): { x: number; y: number } {
+  const n = Math.max(1, cfg.survivors.roster.length);
+  const a = -Math.PI / 2 + (index / n) * Math.PI * 2 + Math.PI / n;
+  const r = s.stronghold.halfSize * Math.SQRT2 + 34;
+  return { x: s.stronghold.x + Math.cos(a) * r, y: s.stronghold.y + Math.sin(a) * r };
+}
+
+/** Add an unlocked survivor to the run (at the start, or the moment they are unlocked between waves). */
+export function addSurvivor(s: GameState, cfg: GameConfig, id: string): boolean {
+  const def = survivorDef(cfg, id);
+  if (!def || s.survivors.some((v) => v.id === id)) return false;
+  const index = cfg.survivors.roster.indexOf(def);
+  const p = survivorPost(s, cfg, index);
+  s.survivors.push({ id, x: p.x, y: p.y, hp: def.maxHp, maxHp: def.maxHp, downed: false, retreating: false, cooldown: 0, aim: Math.atan2(p.y - s.stronghold.y, p.x - s.stronghold.x), lastShot: -1e9, targetId: null, moving: false, kills: 0 });
+  return true;
+}
+
+/** Bullet damage after the base-level bonus. */
+export function survivorDamage(s: GameState, cfg: GameConfig, def: SurvivorDef): number {
+  return def.damage * (1 + cfg.survivors.damagePerBaseLevel * s.stronghold.level);
+}
+
+/** Keep a walker out of the stronghold, off rocks and off anything built (traps can be walked over). */
+function survivorCollide(s: GameState, cfg: GameConfig, v: { x: number; y: number }): void {
+  const sh = s.stronghold;
+  const pad = sh.halfSize + 12;
+  const dx = v.x - sh.x;
+  const dy = v.y - sh.y;
+  if (Math.abs(dx) < pad && Math.abs(dy) < pad) {
+    // Push out through the nearest wall.
+    if (pad - Math.abs(dx) < pad - Math.abs(dy)) v.x = sh.x + Math.sign(dx || 1) * pad;
+    else v.y = sh.y + Math.sign(dy || 1) * pad;
+  }
+  const out = (cx: number, cy: number, r: number) => {
+    const ox = v.x - cx;
+    const oy = v.y - cy;
+    const d = Math.hypot(ox, oy);
+    if (d < r && d > 1e-6) {
+      v.x = cx + (ox / d) * r;
+      v.y = cy + (oy / d) * r;
+    }
+  };
+  for (const [col, row] of cfg.construction.invalidTerrain) {
+    const c = tileCenter(cfg, col, row);
+    out(c.x, c.y, assetRadius("rock") + 8);
+  }
+  for (const st of s.structures) if (!isTrap(st.kind)) out(st.x, st.y, assetRadius(st.kind) + 8);
+  v.x = Math.min(cfg.world.width - 12, Math.max(12, v.x));
+  v.y = Math.min(cfg.world.height - 12, Math.max(12, v.y));
+}
+
+function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
+  if (s.survivors.length === 0) return;
+  const sv = cfg.survivors;
+  const sh = s.stronghold;
+  const door = { x: sh.x + sh.halfSize + 18, y: sh.y + sh.halfSize + 18 };
+  s.survivors.forEach((v) => {
+    const def = survivorDef(cfg, v.id);
+    if (!def || v.downed) return;
+    if (v.hp <= 0) {
+      v.downed = true;
+      v.hp = 0;
+      v.targetId = null;
+      v.moving = false;
+      s.notices.push({ text: `${def.name} is down · back next wave`, life: 4 });
+      return;
+    }
+    const index = cfg.survivors.roster.indexOf(def);
+    const post = survivorPost(s, cfg, index);
+    // Fall back when badly hurt; go out again once mostly recovered.
+    if (!v.retreating && v.hp < v.maxHp * sv.retreatBelow) v.retreating = true;
+    if (v.retreating && v.hp >= v.maxHp * 0.8) v.retreating = false;
+
+    // Target: nearest zombie in range (the marksman prefers the toughest in range).
+    let target: Enemy | null = null;
+    let nearest: Enemy | null = null;
+    let nearestD = Infinity;
+    for (const e of s.enemies) {
+      if (e.hp <= 0) continue;
+      const d = Math.hypot(e.x - v.x, e.y - v.y);
+      if (d < nearestD) {
+        nearestD = d;
+        nearest = e;
+      }
+      if (d > def.range) continue;
+      if (!target) target = e;
+      else if (def.perk === "marksman" ? e.hp > target.hp || (e.hp === target.hp && e.id < target.id) : d < Math.hypot(target.x - v.x, target.y - v.y)) target = e;
+    }
+    v.targetId = target ? target.id : null;
+
+    // Where to walk.
+    let goal = post;
+    let speed = def.speed;
+    if (v.retreating) goal = door;
+    else if (nearest && nearestD < def.range * 0.45) {
+      // Too close: back away from it, toward the stronghold side.
+      const ax = v.x - nearest.x;
+      const ay = v.y - nearest.y;
+      const al = Math.hypot(ax, ay) || 1;
+      goal = { x: v.x + (ax / al) * 60 + (sh.x - v.x) * 0.15, y: v.y + (ay / al) * 60 + (sh.y - v.y) * 0.15 };
+    } else if (target) {
+      // In range and at a good distance: hold still and shoot.
+      goal = { x: v.x, y: v.y };
+    } else {
+      // Nothing in range: the collector goes for pickups; anyone steps toward a zombie that is nearly in reach.
+      const pick = def.perk === "collector" ? s.pickups.find((p) => Math.hypot(p.x - sh.x, p.y - sh.y) <= sv.leash + 260) : undefined;
+      if (pick) goal = { x: pick.x, y: pick.y };
+      else if (nearest && nearestD < def.range + 140) goal = { x: nearest.x, y: nearest.y };
+      else speed = def.speed * 0.6; // strolling back to the post
+    }
+    // Never past the leash (pickups may pull the collector further out).
+    const far = def.perk === "collector" && goal !== post && goal !== door ? sv.leash + 260 : sv.leash;
+    const gd = Math.hypot(goal.x - sh.x, goal.y - sh.y);
+    if (gd > far) goal = { x: sh.x + ((goal.x - sh.x) / gd) * far, y: sh.y + ((goal.y - sh.y) / gd) * far };
+    const dx = goal.x - v.x;
+    const dy = goal.y - v.y;
+    const dist = Math.hypot(dx, dy);
+    const before = { x: v.x, y: v.y };
+    if (dist > 3) {
+      const m = Math.min(speed * dt, dist);
+      v.x += (dx / dist) * m;
+      v.y += (dy / dist) * m;
+    }
+    survivorCollide(s, cfg, v);
+    v.moving = Math.hypot(v.x - before.x, v.y - before.y) > speed * dt * 0.3;
+
+    // Perks.
+    if (def.perk === "collector") {
+      for (const p of [...s.pickups]) if (Math.hypot(p.x - v.x, p.y - v.y) <= 26) collectPickup(s, cfg, p.id);
+    }
+    if (def.perk === "mechanic" && s.phase === "wave" && sh.hp < sh.maxHp && Math.hypot(v.x - sh.x, v.y - sh.y) <= sv.leash) {
+      sh.hp = Math.min(sh.maxHp, sh.hp + def.perkValue * dt);
+    }
+    if (v.retreating && Math.hypot(v.x - door.x, v.y - door.y) < 30) v.hp = Math.min(v.maxHp, v.hp + sv.regenPerSecond * dt);
+
+    // Shooting (they can fire while backing away, not while sheltering at the door).
+    v.cooldown -= dt;
+    if (!target) {
+      if (v.cooldown < 0) v.cooldown = 0;
+      if (v.moving && dist > 3) v.aim = Math.atan2(dy, dx);
+      return;
+    }
+    v.aim = Math.atan2(target.y - v.y, target.x - v.x);
+    if (v.cooldown > 0) return;
+    v.cooldown += 1 / def.fireRate;
+    if (v.cooldown < 0) v.cooldown = 0;
+    v.lastShot = s.time;
+    let dmg = survivorDamage(s, cfg, def);
+    if (def.perk === "marksman" && target.type === "brute") dmg *= def.perkValue;
+    const mx = v.x + Math.cos(v.aim) * 14;
+    const my = v.y + Math.sin(v.aim) * 14;
+    const life = def.pellets > 1 ? (def.range * 1.15) / sv.projectileSpeed : cfg.projectile.maxLifetime;
+    for (let i = 0; i < def.pellets; i++) {
+      if (s.projectiles.length >= cfg.limits.maxProjectiles) break;
+      const a = v.aim + (def.pellets > 1 ? (i / (def.pellets - 1) - 0.5) * 0.45 : 0);
+      s.projectiles.push({ x: mx, y: my, vx: Math.cos(a) * sv.projectileSpeed, vy: Math.sin(a) * sv.projectileSpeed, damage: dmg, life });
+    }
+    s.shotsFired++;
+  });
+  // Don't stand on each other.
+  for (let i = 0; i < s.survivors.length; i++) {
+    for (let j = i + 1; j < s.survivors.length; j++) {
+      const a = s.survivors[i]!;
+      const b = s.survivors[j]!;
+      if (a.downed || b.downed) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 26 && d > 1e-6) {
+        const push = (26 - d) / 2;
+        a.x -= (dx / d) * push;
+        a.y -= (dy / d) * push;
+        b.x += (dx / d) * push;
+        b.y += (dy / d) * push;
+      }
+    }
+  }
+}
+
+/** Downed survivors get back up, fully healed, at their posts. */
+function reviveSurvivors(s: GameState, cfg: GameConfig): void {
+  for (const v of s.survivors) {
+    if (!v.downed) continue;
+    const def = survivorDef(cfg, v.id);
+    if (!def) continue;
+    const p = survivorPost(s, cfg, cfg.survivors.roster.indexOf(def));
+    v.downed = false;
+    v.retreating = false;
+    v.hp = v.maxHp;
+    v.x = p.x;
+    v.y = p.y;
+  }
+}
+
+/**
+ * The last stand: once per run, if the stronghold would fall while at least
+ * one survivor is on their feet, they hold it. The stronghold gets some
+ * health back and a short force field. Returns whether it happened.
+ */
+function lastStand(s: GameState, cfg: GameConfig): boolean {
+  if (s.lastStandUsed || !s.survivors.some((v) => !v.downed)) return false;
+  const ls = cfg.survivors.lastStand;
+  s.lastStandUsed = true;
+  s.stronghold.hp = Math.max(1, Math.round(s.stronghold.maxHp * ls.healShare));
+  s.boost = { kind: "shield", left: ls.shieldSeconds, total: ls.shieldSeconds };
+  s.notices.unshift({ text: "LAST STAND · the survivors hold the line", life: 5 });
+  return true;
 }
 
 export type TruckState = "parked" | "queued" | "departing" | "away" | "arriving" | "unloading" | "wrecked";
@@ -759,6 +994,9 @@ export interface GameState {
   salvageBanked: number;
   /** Salvage from the stockpile turned into starting Supplies for this run. */
   salvageUsed: number;
+  survivors: Survivor[];
+  /** The one last stand of the run has been made. */
+  lastStandUsed: boolean;
   /** Airstrike bombs still to land. */
   bombs: Bomb[];
   /** The bomber's pass, for drawing only: from, to, and progress. */
@@ -799,7 +1037,13 @@ function edgePoint(s: GameState, cfg: GameConfig, edge: Edge, radius: number): {
   }
 }
 
-export function createState(cfg: GameConfig, seed: number): GameState {
+/** What carries over into a run from the permanent profile. */
+export interface RunOptions {
+  /** Ids of the survivors unlocked so far. */
+  survivors?: readonly string[];
+}
+
+export function createState(cfg: GameConfig, seed: number, options: RunOptions = {}): GameState {
   const sh = cfg.stronghold;
   const s: GameState = {
     seed,
@@ -834,6 +1078,8 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     truck: newTruck(cfg),
     salvageBanked: 0,
     salvageUsed: 0,
+    survivors: [],
+    lastStandUsed: false,
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,
@@ -844,6 +1090,7 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     damageTaken: 0,
   };
   rollWave(s, cfg);
+  for (const id of options.survivors ?? []) addSurvivor(s, cfg, id);
   return s;
 }
 
@@ -1730,6 +1977,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   stepBombs(s, cfg, dt);
   stepBurns(s, cfg, dt);
   stepTruck(s, cfg, dt);
+  stepSurvivors(s, cfg, dt);
   stepEnemies(s, cfg, dt);
   stepTraps(s, cfg);
   stepTurrets(s, cfg, s.boost?.kind === "overdrive" ? dt * cfg.boost.overdrive.fireRate : dt);
@@ -1741,7 +1989,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   // Remove the dead.
   if (s.enemies.some((e) => e.hp <= 0)) s.enemies = s.enemies.filter((e) => e.hp > 0);
 
-  if (s.stronghold.hp <= 0) {
+  if (s.stronghold.hp <= 0 && !lastStand(s, cfg)) {
     s.stronghold.hp = 0;
     s.phase = "lost";
   } else if (s.phase === "wave" && s.nextSpawn >= s.spawns.length && s.enemies.length === 0) {
@@ -1749,6 +1997,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     releaseMortars(s);
     s.shells = [];
     s.bombs = [];
+    reviveSurvivors(s, cfg);
     // The truck that left this wave comes back next wave; a wrecked one is replaced.
     if (s.truck.state === "away") s.truck.due = true;
     else if (s.truck.state === "wrecked") resetTruck(s, cfg);
@@ -1809,6 +2058,29 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
     if (e.hp <= 0) continue;
     const w = cfg.enemies[e.type];
     const shGap = distanceToStronghold(s, e.x, e.y) - w.radius;
+    // A survivor within reach gets attacked by whoever is passing.
+    if (shGap > 0 && s.survivors.length > 0) {
+      let prey: Survivor | null = null;
+      let preyD = cfg.survivors.aggroRadius;
+      for (const v of s.survivors) {
+        if (v.downed) continue;
+        const d = Math.hypot(v.x - e.x, v.y - e.y);
+        if (d < preyD) {
+          preyD = d;
+          prey = v;
+        }
+      }
+      if (prey) {
+        const gap = preyD - w.radius - 10;
+        if (gap > 0) {
+          e.attacking = false;
+          moveToward(e, prey.x, prey.y, Math.min(w.speed * dt, gap));
+        } else if (attackTick(e, w.attackCooldown, dt)) {
+          prey.hp -= w.structureDamage;
+        }
+        continue;
+      }
+    }
     // A truck in the open draws nearby zombies off their route.
     if (exposed && shGap > 0) {
       const td = Math.hypot(truck.x - e.x, truck.y - e.y);

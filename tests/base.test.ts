@@ -135,7 +135,7 @@ test("base upgrade: between waves only, needs Supplies, stops at the top level",
 test("menu: the stronghold offers Repair and Upgrade base, and says what the next level allows", () => {
   const s = prep();
   const menu = panelModel(s, cfg, { col: 4, row: 9 });
-  assert.deepEqual(menu.buttons.map((b) => b.action.kind), ["repair", "upgrade-base", "send-truck", "close"]);
+  assert.deepEqual(menu.buttons.map((b) => b.action.kind), ["repair", "upgrade-base", "send-truck", "page", "close"]);
   assert.match(menu.title, /^Base level 1/);
   assert.match(menu.info!, new RegExp(`→ ${levels[1]!.machineGuns}, ${levels[1]!.mortars} · unlocks Trip wire`));
 });

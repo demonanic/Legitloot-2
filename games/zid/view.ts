@@ -26,6 +26,8 @@ import {
   type GameState,
   type ManageRejection,
   type Structure,
+  type Survivor,
+  survivorDef,
 } from "./sim.js";
 
 const C = {
@@ -169,7 +171,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   const buttonIn = (slot: PanelSlot) => {
     const sel = getView().selected;
     if (!sel) return null;
-    return panelModel(getState(), cfg, sel, getView().buildPage).buttons.find((b) => b.slot === slot) ?? null;
+    return panelModel(getState(), cfg, sel, getView().buildPage, getView().salvage).buttons.find((b) => b.slot === slot) ?? null;
   };
   const slotRegion = (slot: PanelSlot) =>
     rectRegion(
@@ -342,7 +344,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   // Selected tile and a preview of what would be built.
   const sel = view.selected;
   const selStructure = sel ? structureAt(s, sel.col, sel.row) : null;
-  const model = sel && s.phase !== "lost" ? panelModel(s, cfg, sel, view.buildPage) : null;
+  const model = sel && s.phase !== "lost" ? panelModel(s, cfg, sel, view.buildPage, view.salvage) : null;
   const selReason = model?.note ?? null;
   if (sel && selStructure && s.phase !== "lost") {
     ctx.strokeStyle = C.text;
@@ -453,6 +455,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
 
   // Zombies: walkers (olive), runners (small, pale), brutes (large, dark).
   drawTruck(ctx, cfg, s);
+  for (const v of s.survivors) drawSurvivor(ctx, cfg, s, v);
 
   for (const e of s.enemies) {
     const r = cfg.enemies[e.type].radius;
@@ -1862,4 +1865,131 @@ function drawTruck(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState)
       }
     }
   }
+}
+
+/** Each survivor's colours and kit, so they read apart at a glance. */
+const SURVIVOR_LOOKS: Record<string, { body: string; trim: string; hat: "cap" | "helmet" | "bandana"; gun: number; gunW: number; pack: string | null }> = {
+  scout: { body: "#3f8f8a", trim: "#d7f0ea", hat: "cap", gun: 12, gunW: 3, pack: null },
+  marksman: { body: "#6a5a3a", trim: "#d9c9a0", hat: "helmet", gun: 24, gunW: 3, pack: "#3d3423" },
+  mechanic: { body: "#b9652e", trim: "#f2d38a", hat: "bandana", gun: 15, gunW: 5, pack: "#5a5f66" },
+};
+
+/**
+ * A survivor, seen from above: shoulders, head with their own headgear,
+ * weapon pointing where they aim (kicking and flashing when it fires), feet
+ * that step while they walk, a name tag and a health bar. A downed survivor
+ * is shown resting by the wall until the next wave.
+ */
+function drawSurvivor(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, v: Survivor): void {
+  const def = survivorDef(cfg, v.id);
+  if (!def) return;
+  const look = SURVIVOR_LOOKS[v.id] ?? SURVIVOR_LOOKS.scout!;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  if (v.downed) {
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = look.body;
+    ctx.beginPath();
+    ctx.ellipse(v.x, v.y, 13, 7, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.font = "700 13px system-ui, sans-serif";
+    ctx.fillStyle = C.bad;
+    ctx.fillText(`${def.name} · down`, v.x, v.y - 16);
+    return;
+  }
+  const cos = Math.cos(v.aim);
+  const sin = Math.sin(v.aim);
+  const px = -sin;
+  const py = cos;
+  const kick = fresh(s, v.lastShot, 0.12);
+  // Shadow.
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(v.x + 2, v.y + 4, 12, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Feet: alternate while walking.
+  const stride = v.moving ? Math.sin(s.time * 14) * 5 : 0;
+  ctx.fillStyle = "#1f211e";
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(v.x + px * 5 * side + cos * stride * side, v.y + py * 5 * side + sin * stride * side, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Backpack behind the shoulders.
+  if (look.pack) {
+    ctx.fillStyle = look.pack;
+    ctx.beginPath();
+    ctx.arc(v.x - cos * 8, v.y - sin * 8, 6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Shoulders: an ellipse across the facing.
+  ctx.save();
+  ctx.translate(v.x - cos * kick * 2, v.y - sin * kick * 2);
+  ctx.rotate(v.aim);
+  ctx.fillStyle = look.body;
+  ctx.strokeStyle = "#151614";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 7, 12, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Weapon, held forward on the right side.
+  const len = look.gun - kick * 5;
+  ctx.strokeStyle = "#1b1c1a";
+  ctx.lineWidth = look.gunW + 1;
+  ctx.beginPath();
+  ctx.moveTo(4, 5);
+  ctx.lineTo(4 + len, 3);
+  ctx.stroke();
+  ctx.strokeStyle = look.trim;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(6, 5);
+  ctx.lineTo(9, 4.7);
+  ctx.stroke();
+  if (kick > 0.4) {
+    ctx.fillStyle = C.flash;
+    ctx.globalAlpha = kick;
+    ctx.beginPath();
+    ctx.arc(4 + len + 5, 3, v.id === "mechanic" ? 9 : v.id === "marksman" ? 7 : 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  // Head and headgear.
+  ctx.fillStyle = "#e2b98f";
+  ctx.beginPath();
+  ctx.arc(1, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = look.hat === "helmet" ? "#4b5540" : look.hat === "cap" ? look.trim : "#c8553d";
+  ctx.beginPath();
+  if (look.hat === "cap") {
+    ctx.arc(0, 0, 6, Math.PI / 2, (Math.PI * 3) / 2);
+    ctx.fill();
+    ctx.fillRect(0, -4, 7, 8); // peak
+  } else if (look.hat === "helmet") {
+    ctx.arc(1, 0, 7, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.arc(-1, 0, 6, Math.PI * 0.6, Math.PI * 1.4);
+    ctx.fill();
+    ctx.fillRect(-9, -1.5, 5, 3); // knot tails
+  }
+  ctx.restore();
+  // Mechanic at work: a spark of repair light toward the base.
+  if (def.perk === "mechanic" && s.phase === "wave" && s.stronghold.hp < s.stronghold.maxHp && Math.sin(s.time * 9) > 0.6) {
+    ctx.fillStyle = "#8fd3ff";
+    ctx.beginPath();
+    ctx.arc(v.x + (s.stronghold.x - v.x) * 0.2, v.y + (s.stronghold.y - v.y) * 0.2, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Name and health.
+  ctx.font = "700 12px system-ui, sans-serif";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(10,11,10,0.85)";
+  ctx.strokeText(def.name, v.x, v.y - 24);
+  ctx.fillStyle = v.retreating ? C.warn : look.trim;
+  ctx.fillText(def.name, v.x, v.y - 24);
+  if (v.hp < v.maxHp) bar(ctx, v.x - 14, v.y - 18, 28, 4, v.hp / v.maxHp, v.hp / v.maxHp > 0.35 ? C.good : C.bad);
 }

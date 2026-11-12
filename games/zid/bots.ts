@@ -19,6 +19,7 @@ import {
   structureAt,
   upgradeTurret,
   type GameState,
+  type RunOptions,
   type StructureKind,
   type UpgradePathId,
   UPGRADE_PATHS,
@@ -161,8 +162,8 @@ export interface RunResult {
 }
 
 /** Play a whole run: spend in prep, launch early, fight, repeat. */
-export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave = 40): RunResult {
-  const s = createState(cfg, seed);
+export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave = 40, options: RunOptions = {}): RunResult {
+  const s = createState(cfg, seed, options);
   const perWave: RunResult["perWave"] = [];
   while (s.phase !== "lost" && s.wave <= maxWave) {
     player(s, cfg);

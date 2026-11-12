@@ -35,7 +35,7 @@ import {
 } from "./sim.js";
 
 /** The build menu has two pages: weapons, and traps & walls. */
-export type BuildPage = "weapons" | "close" | "traps";
+export type BuildPage = "weapons" | "close" | "traps" | "survivors";
 
 export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "a2" | "close";
 
@@ -45,6 +45,7 @@ export type PanelAction =
   | { kind: "upgrade"; path: UpgradePathId }
   | { kind: "upgrade-base" }
   | { kind: "send-truck" }
+  | { kind: "unlock-survivor"; id: string }
   | { kind: "reinforce" }
   | { kind: "repair" }
   | { kind: "recycle" }
@@ -83,9 +84,33 @@ function recycleButton(cfg: GameConfig, s: GameState, st: Structure, slot: Panel
   return { slot, label: `Recycle · +${recycleValue(cfg, st)}`, enabled: !busy, action: { kind: "recycle" }, confirm: true };
 }
 
-export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: BuildPage = "weapons"): PanelModel {
+export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: BuildPage = "weapons", salvage = 0): PanelModel {
   const close: PanelButton = { slot: "close", label: "Close", enabled: true, action: { kind: "close" } };
   const st = structureAt(s, sel.col, sel.row);
+  const onBase = !st && overlapsStronghold(cfg, sel.col, sel.row);
+  // The survivors page belongs to the base menu; anywhere else it means the first build page.
+  const page: BuildPage = pageIn === "survivors" && !onBase ? "weapons" : pageIn;
+
+  if (onBase && page === "survivors" && s.phase !== "wave") {
+    const slots: PanelSlot[] = ["a0", "b0", "a1", "b1"];
+    const buttons: PanelButton[] = cfg.survivors.roster.slice(0, slots.length).map((d, i) => {
+      const have = s.survivors.some((v) => v.id === d.id);
+      return {
+        slot: slots[i]!,
+        label: have ? `${d.name} · ${d.role} ✓` : `${d.name} · ${d.role} · ${d.cost}`,
+        enabled: !have && s.phase !== "lost" && salvage >= d.cost,
+        action: { kind: "unlock-survivor", id: d.id },
+      };
+    });
+    const next = cfg.survivors.roster.find((d) => !s.survivors.some((v) => v.id === d.id));
+    return {
+      title: `Survivors · Salvage ${salvage}`,
+      note: null,
+      info: next ? `${next.name}: ${next.perkText}` : "Everyone is with you",
+      buttons: [...buttons, { slot: "a2", label: "‹ Base", enabled: true, action: { kind: "page", page: "weapons" } }, close],
+      target: { kind: "stronghold" },
+    };
+  }
 
   if (!st && overlapsStronghold(cfg, sel.col, sel.row)) {
     const sh = s.stronghold;
@@ -130,6 +155,12 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
                     : "Truck is busy",
           enabled: checkSendTruck(s, cfg) === null,
           action: { kind: "send-truck" },
+        },
+        {
+          slot: "b1",
+          label: `Survivors ${s.survivors.length}/${cfg.survivors.roster.length} ›`,
+          enabled: true,
+          action: { kind: "page", page: "survivors" },
         },
         close,
       ],

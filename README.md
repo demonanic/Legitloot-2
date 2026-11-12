@@ -37,6 +37,17 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Survivors
+
+- **Unlocked for good with Salvage**, from the base menu's Survivors page, between waves. Unlocks are saved in the browser and every later run starts with them.
+  - **Ray, Scout (60):** fast, light automatic. Runs to pickups and grabs them.
+  - **Dutch, Marksman (120):** long-range rifle. Picks the toughest target; +50% damage to brutes.
+  - **Patch, Mechanic (180):** shotgun. Repairs the stronghold by 1.2 health a second during an assault.
+- **Fully automatic:** each holds a post by the stronghold, shoots what comes into range, backs away from anything too close, stays on a leash, walks round the stronghold, rocks and structures, and falls back to the door to recover below 35% health.
+- **Zombies attack them** when close. A survivor who runs out of health is down for the rest of the wave and returns, healed, for the next.
+- **Damage grows with the base:** +35% per base level.
+- **Last stand:** once per run, if the stronghold would fall while a survivor is on their feet, it instead gets 25% of its health back and a 5-second force field.
+
 ### Truck routing and permanent Salvage
 
 - **The truck goes round things.** It plans a route across the grid around rocks, the stronghold and everything you built (rubble and traps included), then straightens it into long runs and wide corners. Collisions use each thing's real footprint. If you wall it in completely it pushes through as few of your structures as it can, never a rock or the stronghold.

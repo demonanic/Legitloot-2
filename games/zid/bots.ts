@@ -27,6 +27,7 @@ import {
   isUnlocked,
   isTrap,
   upgradeBase,
+  nextBaseUpgradeCost,
 } from "./sim.js";
 
 export type Player = (s: GameState, cfg: GameConfig) => void;
@@ -84,6 +85,19 @@ function placeTraps(s: GameState, cfg: GameConfig): void {
 export const sensiblePlayer: Player = (s, cfg) => {
   for (const st of s.structures) if (st.destroyed || st.hp < st.maxHp) repair(s, cfg, { kind: "structure", id: st.id });
   if (s.stronghold.hp < s.stronghold.maxHp * 0.7) repair(s, cfg, { kind: "stronghold" });
+  // Chase unlocks: once the defence is up to strength, a base upgrade that
+  // brings a new weapon comes before turret upgrades, if Supplies are left over.
+  const nextLevel = s.stronghold.level + 2;
+  const want = 2 + Math.floor((s.wave - 1) / 2);
+  const cost = nextBaseUpgradeCost(s, cfg);
+  if (
+    cost !== null &&
+    Object.values(cfg.unlocks).includes(nextLevel) &&
+    s.structures.filter((st) => st.turret).length >= want &&
+    s.currency >= cost + 60
+  ) {
+    upgradeBase(s, cfg);
+  }
   for (let guard = 0; guard < 200; guard++) {
     const want = 2 + Math.floor((s.wave - 1) / 2);
     const weapons = s.structures.filter((st) => st.turret).length;

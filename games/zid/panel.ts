@@ -94,8 +94,8 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
       title: `Base level ${sh.level + 1} · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
       note: null,
       info: lvl
-        ? `Allows ${lvl.machineGuns} turrets, ${lvl.mortars} mortar${lvl.mortars === 1 ? "" : "s"}` +
-          (next ? ` · next: ${next.machineGuns} turrets, ${next.mortars} mortars, +${next.maxHp - lvl.maxHp} hp` : "")
+        ? `Turrets ${lvl.machineGuns}, mortars ${lvl.mortars}` +
+          (next ? ` → ${next.machineGuns}, ${next.mortars}` + nextUnlock(cfg, sh.level + 2) : " · max level")
         : undefined,
       buttons: [
         repairButton(s, cfg, "a0", null, "Repair"),
@@ -118,7 +118,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
     const buildButton = (slot: PanelSlot, kind: StructureKind, name: string): PanelButton => {
       const why = checkBuild(s, cfg, sel.col, sel.row, kind);
       const action: PanelAction = { kind: "build", structure: kind };
-      if (!isUnlocked(s, cfg, kind)) return { slot, label: `${name} · wave ${cfg.unlocks[kind]}`, enabled: false, action };
+      if (!isUnlocked(s, cfg, kind)) return { slot, label: `${name} · base ${cfg.unlocks[kind]}`, enabled: false, action };
       const limit = buildLimit(s, cfg, kind);
       if (limit === null) return { slot, label: `${name} · ${buildCost(cfg, kind)}`, enabled: !why, action };
       const n = countKind(s, kind);
@@ -235,4 +235,13 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
     ],
     target: { kind: "structure", structure: st },
   };
+}
+
+/** " · unlocks Gatling" when that base level unlocks something, else "". */
+function nextUnlock(cfg: GameConfig, baseLevel: number): string {
+  const names: Record<string, string> = { tripwire: "Trip wire", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
+  const kinds = Object.entries(cfg.unlocks)
+    .filter(([, lvl]) => lvl === baseLevel)
+    .map(([k]) => names[k] ?? k);
+  return kinds.length ? ` · unlocks ${kinds.join(", ")}` : "";
 }

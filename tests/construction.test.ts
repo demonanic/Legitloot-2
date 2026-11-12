@@ -20,10 +20,11 @@ function tiles() {
 }
 
 test("grid: tiles stay close to touch size, and taps near an edge are forgiven", () => {
-  // 44 CSS px is the guideline on a 412 px-wide phone; tiles are a little
-  // under it, so taps just outside a usable tile still pick it.
+  // 44 CSS px is the guideline on a 412 px-wide phone; tiles are under it
+  // (about 37 px, for a bigger battlefield), so taps just outside a usable
+  // tile still pick it.
   const cssPx = cfg.construction.tileSize * (412 / cfg.world.width);
-  assert.ok(cssPx >= 38, `tile is ${cssPx.toFixed(1)} CSS px`);
+  assert.ok(cssPx >= 36, `tile is ${cssPx.toFixed(1)} CSS px`);
   const b = buildableTiles(cfg).find((t) => tileStatus(cfg, t.col, t.row - 1) === "outside-perimeter")!;
   const o = tileOrigin(cfg, b.col, b.row);
   const nobody = () => false;
@@ -35,16 +36,15 @@ test("grid: tiles stay close to touch size, and taps near an edge are forgiven",
 
 test("grid: the perimeter is a custom shape, not a rectangle", () => {
   assert.ok(cfg.construction.perimeter.length > 4);
-  // Same row, same distance from centre, different status = not a simple box.
+  // Rows have different widths, and the fence is not the full grid.
   const { rows, cols } = gridSize(cfg);
-  let irregular = false;
+  const widths = new Set<number>();
   for (let r = 0; r < rows; r++) {
-    const inRow = Array.from({ length: cols }, (_, c) => tileStatus(cfg, c, r) !== "outside-perimeter");
-    const first = inRow.indexOf(true);
-    const last = inRow.lastIndexOf(true);
-    if (first !== -1 && first !== cols - 1 - last) irregular = true;
+    const n = Array.from({ length: cols }, (_, c) => tileStatus(cfg, c, r) !== "outside-perimeter").filter(Boolean).length;
+    if (n > 0) widths.add(n);
   }
-  assert.ok(irregular, "the boundary is not symmetric in every row");
+  const irregular = widths.size >= 3;
+  assert.ok(irregular, `row widths ${[...widths]}`);
 });
 
 test("grid: the stronghold sits inside the boundary and its tiles are not buildable", () => {

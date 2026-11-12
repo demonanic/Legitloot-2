@@ -48,12 +48,12 @@ Not in this milestone: free placement (Zone B), other turrets, barricades, other
 
 ### Arsenal update
 
-- **Bigger battlefield:** everything is about 15% smaller and the fence is wider: 92 buildable tiles (was 52). Tiles are about 39 px on a phone, so taps just outside a tile still pick it.
-- **Gatling gun** (90, from wave 5): spins up from 3 to 16 shots a second while it has targets; the barrels visibly spin and glow, then wind down.
-- **Rocket launcher** (120, from wave 8): homing rockets aimed at the toughest zombie in range, direct hit plus splash; smoke trails and back-blast.
-- **Proximity mine** (15, from the start) and **trip wire** (25, from wave 3): don't block zombies and are never attacked. A mine blasts everything near it; a trip wire sets off five blasts along the wire. Each goes off once; **re-arm** spent traps between waves or recycle them. Trap damage grows with the base level.
+- **Bigger battlefield:** everything is about 20% smaller and the fence is wider: 122 buildable tiles (was 52). Tiles are about 37 px on a phone, so taps just outside a tile still pick it.
+- **Gatling gun** (90, base level 3): spins up from 3 to 16 shots a second while it has targets; the barrels visibly spin and glow, then wind down.
+- **Rocket launcher** (120, base level 4): homing rockets aimed at the toughest zombie in range, direct hit plus splash; smoke trails and back-blast.
+- **Proximity mine** (15, from the start) and **trip wire** (25, base level 2): don't block zombies and are never attacked. A mine blasts everything near it; a trip wire sets off five blasts along the wire. Each goes off once; **re-arm** a spent trap between waves for a fee (60% of what it cost) or recycle it. Trap damage grows with the base level.
 - **Limits:** Gatlings and rockets start at 1 each; mines and trip wires share a trap limit (6 at the start). All grow with base upgrades.
-- **Build menu** has two pages: Weapons, and Traps & walls. Locked items show the wave they unlock on, and a banner announces each unlock.
+- **Unlocks come from base upgrades:** locked items show the base level they need, the base menu says what the next level unlocks, and a banner announces each unlock. The build menu has two pages: Weapons, and Traps & walls.
 
 ### URL options
 

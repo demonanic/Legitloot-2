@@ -96,7 +96,7 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
   "invalid-terrain": "Can't build on that ground",
   occupied: "That tile is taken",
   "limit-reached": "Limit reached · upgrade the base",
-  locked: "Not unlocked yet",
+  locked: "Upgrade the base to unlock",
   "insufficient-funds": "Not enough supplies",
 };
 

@@ -26,9 +26,11 @@ const cfg = baseConfig;
 const DT = 1 / 30;
 
 /** Prep state on a given wave, with plenty of supplies. */
-function prep(wave = 10, currency = 10_000): GameState {
+/** A run with everything unlocked (base level 4) unless a lower base level is asked for. */
+function prep(baseLevel = 4, currency = 10_000): GameState {
   const s = createState(cfg, 1);
-  s.wave = wave;
+  s.wave = 10;
+  s.stronghold.level = baseLevel - 1;
   s.currency = currency;
   return s;
 }
@@ -64,29 +66,30 @@ function hold(s: GameState, seconds: number): void {
 
 // --- Unlocks ------------------------------------------------------------------
 
-test("unlocks: trip wire from wave 3, Gatling from 5, rockets from 8; locked builds are refused and shown", () => {
+test("unlocks: trip wire at base level 2, Gatling at 3, rockets at 4; locked builds are refused and shown", () => {
   const s = prep(1);
-  for (const [kind, wave] of [["tripwire", 3], ["gatling", 5], ["rocket", 8]] as const) {
-    assert.equal(cfg.unlocks[kind], wave);
-    s.wave = wave - 1;
+  for (const [kind, level] of [["tripwire", 2], ["gatling", 3], ["rocket", 4]] as const) {
+    assert.equal(cfg.unlocks[kind], level);
+    s.stronghold.level = level - 2;
     assert.equal(checkBuild(s, cfg, 2, 4, kind), "locked");
-    s.wave = wave;
+    s.stronghold.level = level - 1;
     assert.equal(checkBuild(s, cfg, 2, 4, kind), null);
   }
-  s.wave = 1;
+  s.stronghold.level = 0;
+  s.wave = 30;
+  assert.equal(checkBuild(s, cfg, 2, 4, "gatling"), "locked", "waves alone don't unlock anything");
   const menu = panelModel(s, cfg, { col: 2, row: 4 });
   const gat = menu.buttons.find((b) => b.action.kind === "build" && b.action.structure === "gatling")!;
   assert.equal(gat.enabled, false);
-  assert.match(gat.label, /wave 5/);
+  assert.match(gat.label, /base 3/);
 });
 
-test("unlocks: clearing the wave before an unlock shows a banner", () => {
-  const s = prep(4);
-  startWaveNow(s, cfg);
-  s.nextSpawn = s.spawns.length;
-  s.enemies = [];
-  step(s, cfg, DT);
-  assert.equal(s.wave, 5);
+test("unlocks: upgrading the base shows a banner for what it unlocks", () => {
+  const s = prep(2);
+  s.wave = 1;
+  s.phase = "prep";
+  assert.ok(upgradeBase(s, cfg).ok);
+  assert.equal(s.stronghold.level + 1, 3);
   assert.ok(s.notices.some((n) => /Gatling/.test(n.text)), JSON.stringify(s.notices));
 });
 
@@ -226,10 +229,10 @@ test("traps: spent traps re-arm between waves at the rubble rate, or recycle", (
 });
 
 test("traps: mines and trip wires share one limit that grows with the base", () => {
-  const s = prep();
+  const s = prep(2);
   const limit = buildLimit(s, cfg, "mine")!;
   assert.equal(limit, buildLimit(s, cfg, "tripwire"));
-  const tiles = [[1, 3], [2, 3], [3, 3], [4, 3], [5, 3], [6, 3], [7, 3], [8, 3], [1, 4], [2, 4]] as const;
+  const tiles = [[1, 4], [2, 4], [3, 4], [4, 4], [5, 4], [6, 4], [7, 4], [8, 4], [1, 5], [2, 5], [3, 5], [4, 5]] as const;
   for (let i = 0; i < limit; i++) build(s, i % 2 ? "mine" : "tripwire", tiles[i]![0], tiles[i]![1]);
   assert.equal(countKind(s, "mine"), limit);
   assert.equal(checkBuild(s, cfg, tiles[limit]![0], tiles[limit]![1], "mine"), "limit-reached");
@@ -244,11 +247,14 @@ test("traps: damage grows with the base level", () => {
   assert.ok(trapDamageMultiplier(s, cfg) > m0);
 });
 
-test("gatling and rocket limits start at one each", () => {
-  const s = prep();
+test("gatling and rocket limits are one each when they unlock", () => {
+  const s = prep(4);
+  s.stronghold.level = 2; // base 3: Gatling unlocked
   build(s, "gatling", 2, 4);
-  build(s, "rocket", 3, 4);
   assert.equal(checkBuild(s, cfg, 4, 4, "gatling"), "limit-reached");
+  s.stronghold.level = 3; // base 4: rockets unlocked, a second Gatling allowed
+  assert.equal(checkBuild(s, cfg, 4, 4, "gatling"), null);
+  build(s, "rocket", 3, 4);
   assert.equal(checkBuild(s, cfg, 4, 4, "rocket"), "limit-reached");
-  assert.ok(structureAt(s, 2, 4));
 });
+

@@ -15,8 +15,8 @@ import {
 
 const DT = 1 / 30;
 /** The two tiles beside the stronghold, used where the old fixed mounts were. */
-const W: [number, number] = [2, 8];
-const E: [number, number] = [6, 8];
+const W: [number, number] = [2, 9];
+const E: [number, number] = [7, 9];
 const at = (s: GameState, t: [number, number]) => s.structures.find((st) => st.col === t[0] && st.row === t[1]) ?? null;
 
 const WALKER = baseConfig.enemies.walker;
@@ -100,7 +100,7 @@ test("targeting: picks the in-range enemy closest to the stronghold", () => {
   const west = buildTurret(s, baseConfig, ...W);
   assert.ok(west.ok);
   const from = west.structure;
-  const far = enemy(s, from.x - 180, from.y); // in range, further from stronghold
+  const far = enemy(s, from.x - 150, from.y); // in range, further from stronghold
   const near = enemy(s, from.x - 60, from.y); // in range, closer to stronghold
   enemy(s, from.x - 900, from.y); // out of range
   assert.equal(pickTarget(s, baseConfig, from)?.id, near.id);

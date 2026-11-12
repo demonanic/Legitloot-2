@@ -199,15 +199,15 @@ test("split fire: each tap claims the closest free mortar in reach; when all are
   const mb = b.structure;
   assault(s);
   // Both mortars reach every spot used here.
-  const p1 = { x: ma.x + 40, y: 600 }; // closer to A
+  const p1 = { x: ma.x + 60, y: ma.y + 192 }; // closer to A
   const r1 = aimMortars(s, cfg, p1);
   assert.deepEqual(r1, { ok: true, action: "aimed", mortarId: ma.id });
-  const p2 = { x: 300, y: 640 }; // still closer to A, but A is taken
+  const p2 = { x: ma.x + 100, y: ma.y + 272 }; // still closer to A, but A is taken
   assert.deepEqual(aimMortars(s, cfg, p2), { ok: true, action: "aimed", mortarId: mb.id });
   assert.deepEqual(ma.turret!.aimPoint, p1);
   assert.deepEqual(mb.turret!.aimPoint, p2);
   // Both aimed: a third spot moves the closest one.
-  const p3 = { x: mb.x - 20, y: 560 };
+  const p3 = { x: mb.x - 16, y: mb.y + 212 };
   assert.deepEqual(aimMortars(s, cfg, p3), { ok: true, action: "aimed", mortarId: mb.id });
   assert.deepEqual(ma.turret!.aimPoint, p1, "A keeps its target");
 });

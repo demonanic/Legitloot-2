@@ -358,9 +358,9 @@ function kindMaxHp(cfg: GameConfig, kind: StructureKind): number {
   }
 }
 
-/** Whether this kind can be built yet in the run. */
+/** Whether this kind can be built yet: the base must be at its unlock level. */
 export function isUnlocked(s: GameState, cfg: GameConfig, kind: StructureKind): boolean {
-  return s.wave >= cfg.unlocks[kind];
+  return s.stronghold.level + 1 >= cfg.unlocks[kind];
 }
 
 /**
@@ -439,6 +439,9 @@ export function upgradeBase(s: GameState, cfg: GameConfig): ManageResult {
   const max = baseLevel(s, cfg).maxHp;
   s.stronghold.hp += max - s.stronghold.maxHp;
   s.stronghold.maxHp = max;
+  for (const k of ALL_KINDS) {
+    if (cfg.unlocks[k] === s.stronghold.level + 1) s.notices.push({ text: `Unlocked: ${KIND_NAMES[k]}`, life: 5 });
+  }
   return { ok: true };
 }
 
@@ -915,9 +918,6 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.wavesCleared++;
     s.wave++;
     s.rockets = [];
-    for (const k of ALL_KINDS) {
-      if (cfg.unlocks[k] === s.wave && s.wave > 1) s.notices.push({ text: `Unlocked: ${KIND_NAMES[k]}`, life: 5 });
-    }
     rollWave(s, cfg);
     if (cfg.wave.prepSeconds > 0) {
       s.phase = "prep";

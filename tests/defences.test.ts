@@ -186,7 +186,7 @@ test("barricades: placed on buildable tiles only, cost deducted, occupied and as
   assert.deepEqual(buildBarricade(s, cfg, 3, 5), { ok: false, reason: "occupied" });
   assert.deepEqual(buildTurret(s, cfg, 3, 5), { ok: false, reason: "occupied" });
   assert.deepEqual(buildBarricade(s, cfg, 0, 0), { ok: false, reason: "outside-perimeter" });
-  assert.deepEqual(buildBarricade(s, cfg, 2, 6), { ok: false, reason: "invalid-terrain" });
+  assert.deepEqual(buildBarricade(s, cfg, 2, 7), { ok: false, reason: "invalid-terrain" });
   const c = s.currency;
   assault(s);
   assert.deepEqual(buildBarricade(s, cfg, 4, 5), { ok: false, reason: "assault-active" });
@@ -264,7 +264,7 @@ test("pathing: recycling a blocker in prep reopens the route", () => {
   assert.ok(field.dist[0]! > cfg.pathing.blockedTileCost, "enclosed: every route costs a breach");
   // A wall on a side, not a corner: corners only touch diagonally, and
   // zombies may not squeeze diagonally between two walls.
-  const side = walls.find((w) => w.col === 4 && w.row === 7)!;
+  const side = walls.find((w) => w.col === 4 && w.row === 8)!;
   recycleStructure(s, cfg, side.id);
   assert.ok(s.layoutVersion > v0);
   assert.ok(pathField(s, cfg).dist[0]! < cfg.pathing.blockedTileCost, "open again");
@@ -313,7 +313,7 @@ test("menus: rubble offers Rebuild and Recycle; the stronghold offers Repair; em
   assert.deepEqual(rubble.buttons.map((b) => b.action.kind), ["repair", "recycle", "close"]);
   assert.ok(rubble.buttons[0]!.label.startsWith("Rebuild"));
   s.stronghold.hp = 200;
-  const sh = panelModel(s, cfg, { col: 4, row: 8 });
+  const sh = panelModel(s, cfg, { col: 4, row: 9 });
   assert.equal(sh.target.kind, "stronghold");
   assert.equal(sh.buttons[0]!.action.kind, "repair");
   assert.ok(sh.buttons[0]!.enabled);

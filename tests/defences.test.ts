@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { baseConfig, type EnemyType } from "../games/zid/config.js";
 import { gridSize, overlapsStronghold } from "../games/zid/grid.js";
 import { nextTile, pathField } from "../games/zid/path.js";
+import { panelModel } from "../games/zid/panel.js";
 import {
   buildBarricade,
   buildTurret,
@@ -130,9 +131,38 @@ test("repair: partial when supplies are short; refused when broke or mid-assault
   assert.equal(t.hp, hp);
   s.currency = 1000;
   assault(s);
-  assert.deepEqual(repair(s, cfg, { kind: "structure", id: t.id }), { ok: false, reason: "assault-active" });
-  assert.deepEqual(repair(s, cfg, { kind: "stronghold" }), { ok: false, reason: "assault-active" });
-  assert.equal(s.currency, 1000);
+});
+
+test("repairs: allowed during an assault at the emergency price, for structures, rubble and the stronghold", () => {
+  const s = prep();
+  const built = buildTurret(s, cfg, 4, 5);
+  assert.ok(built.ok);
+  const t = built.structure;
+  damageStructure(s, t, 60);
+  s.stronghold.hp -= 100;
+  const calm = repairQuote(s, cfg, { kind: "structure", id: t.id });
+  const calmBase = repairQuote(s, cfg, { kind: "stronghold" });
+  assert.ok(typeof calm !== "string" && typeof calmBase !== "string");
+  assault(s);
+  const hot = repairQuote(s, cfg, { kind: "structure", id: t.id });
+  const hotBase = repairQuote(s, cfg, { kind: "stronghold" });
+  assert.ok(typeof hot !== "string" && typeof hotBase !== "string");
+  // Same repair, about 1.5x the price (whole Supplies, so allow rounding).
+  assert.equal(hot.hp, calm.hp);
+  assert.ok(Math.abs(hot.cost - calm.cost * cfg.repair.assaultMultiplier) <= 1, `${hot.cost} vs ${calm.cost}`);
+  assert.ok(Math.abs(hotBase.cost - calmBase.cost * cfg.repair.assaultMultiplier) <= 1, `${hotBase.cost} vs ${calmBase.cost}`);
+  const before = s.currency;
+  assert.ok(repair(s, cfg, { kind: "stronghold" }).ok);
+  assert.equal(s.stronghold.hp, s.stronghold.maxHp);
+  assert.equal(s.currency, before - hotBase.cost);
+  damageStructure(s, t, 1e9);
+  assert.ok(repair(s, cfg, { kind: "structure", id: t.id }).ok, "rubble can be rebuilt mid-assault");
+  assert.equal(t.destroyed, false);
+  // Everything else stays locked.
+  assert.deepEqual(upgradeTurret(s, cfg, t.id, "speed"), { ok: false, reason: "assault-active" });
+  assert.deepEqual(recycleStructure(s, cfg, t.id), { ok: false, reason: "assault-active" });
+  const menu = panelModel(s, cfg, { col: 4, row: 5 });
+  assert.deepEqual(menu.buttons.map((b) => b.action.kind), ["repair", "close"]);
 });
 
 test("repair: the stronghold repairs up to its maximum at a per-health cost", () => {
@@ -305,7 +335,6 @@ test("pathing is deterministic with structures on the field", () => {
 });
 
 test("menus: rubble offers Rebuild and Recycle; the stronghold offers Repair; empty tiles offer both builds", async () => {
-  const { panelModel } = await import("../games/zid/panel.js");
   const s = prep();
   const t = built(buildTurret(s, cfg, 2, 8));
   damageStructure(s, t, 1e6);

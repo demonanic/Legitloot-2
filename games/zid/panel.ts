@@ -90,6 +90,15 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
     const lvl = cfg.stronghold.levels[sh.level];
     const upCost = nextBaseUpgradeCost(s, cfg);
     const next = cfg.stronghold.levels[sh.level + 1];
+    if (s.phase === "wave") {
+      return {
+        title: `Base level ${sh.level + 1} · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
+        note: null,
+        info: EMERGENCY_INFO(cfg),
+        buttons: [repairButton(s, cfg, "a0", null, "Repair"), close],
+        target: { kind: "stronghold" },
+      };
+    }
     return {
       title: `Base level ${sh.level + 1} · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
       note: null,
@@ -151,6 +160,18 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
   }
 
   const name = KIND_NAMES[st.kind];
+  if (s.phase === "wave") {
+    // Mid-assault: emergency repairs and re-arming only, at a higher price.
+    const trap = isTrap(st.kind);
+    const label = st.destroyed ? (trap ? "Re-arm" : "Rebuild") : "Repair";
+    return {
+      title: st.destroyed ? `${name} · ${trap ? "spent" : "destroyed"}` : `${name} · ${Math.ceil(st.hp)}/${st.maxHp} hp`,
+      note: null,
+      info: trap && !st.destroyed ? "Armed and waiting" : EMERGENCY_INFO(cfg),
+      buttons: trap && !st.destroyed ? [close] : [repairButton(s, cfg, "a0", st, label), close],
+      target: { kind: "structure", structure: st },
+    };
+  }
   if (st.destroyed && isTrap(st.kind)) {
     return {
       title: `${name} · spent`,
@@ -245,3 +266,6 @@ function nextUnlock(cfg: GameConfig, baseLevel: number): string {
     .map(([k]) => names[k] ?? k);
   return kinds.length ? ` · unlocks ${kinds.join(", ")}` : "";
 }
+
+const EMERGENCY_INFO = (cfg: GameConfig): string =>
+  `Emergency work during an assault costs ${Math.round((cfg.repair.assaultMultiplier - 1) * 100)}% more`;

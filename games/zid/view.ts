@@ -13,6 +13,9 @@ import {
   remainingEnemies,
   structureAt,
   turretRange,
+  barrelCount,
+  barrelSpacing,
+  lastBarrel,
   SPLAT_SECONDS,
   type BoostKind,
   type BuildRejection,
@@ -74,6 +77,8 @@ export interface ViewState {
   recycleArmedUntil: number;
   /** Which build-menu page is showing. */
   buildPage: BuildPage;
+  /** Draw the faint range ring around every weapon. The selected weapon's ring always shows. */
+  showRanges: boolean;
 }
 
 export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
@@ -110,6 +115,7 @@ export interface UiActions {
   panel(action: PanelAction): void;
   restart(): void;
   toggleDiagnostics(): void;
+  toggleRanges(): void;
 }
 
 /** Fixed button rectangles in world units, shared by drawing and hit tests. */
@@ -134,6 +140,7 @@ export function buttonRects(cfg: GameConfig) {
     boostBounty: { x: 370, y: h - 132, w: 310, h: 76 },
     meter: { x: 40, y: h - 40, w: w - 80, h: 16 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
+    ranges: { x: w - 104, y: 82, w: 90, h: 36 },
   };
 }
 
@@ -172,6 +179,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
     slotRegion("a2"),
     slotRegion("close"),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
+    rectRegion("ranges", r.ranges, () => act.toggleRanges(), () => !over()),
     // While the end screen is up it blocks all world taps; only its button acts.
     rectRegion("end-screen", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, over),
     rectRegion("restart", r.restart, () => act.restart(), over),
@@ -285,11 +293,11 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Turret range rings, faint, so coverage reads.
+  // Turret range rings, faint, so coverage reads. Can be switched off.
   ctx.strokeStyle = "rgba(233,214,141,0.08)";
   ctx.lineWidth = 2;
   for (const st of s.structures) {
-    if (!st.turret || st.destroyed) continue;
+    if (!view.showRanges || !st.turret || st.destroyed) continue;
     ctx.beginPath();
     ctx.arc(st.x, st.y, turretRange(cfg, st), 0, Math.PI * 2);
     ctx.stroke();
@@ -581,6 +589,20 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   const r = buttonRects(cfg);
+  if (s.phase !== "lost") {
+    // Range-ring toggle, under the FPS button.
+    ctx.fillStyle = C.hudBg;
+    roundRect(ctx, r.ranges.x, r.ranges.y, r.ranges.w, r.ranges.h, 8);
+    ctx.fill();
+    ctx.strokeStyle = view.showRanges ? C.text : C.quiet;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = view.showRanges ? C.text : C.quiet;
+    ctx.font = "700 16px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(view.showRanges ? "Rings on" : "Rings off", r.ranges.x + r.ranges.w / 2, r.ranges.y + r.ranges.h / 2 + 1);
+  }
   ctx.strokeStyle = showDiag ? C.text : C.quiet;
   ctx.lineWidth = 2;
   roundRect(ctx, r.diagnostics.x, r.diagnostics.y, r.diagnostics.w, r.diagnostics.h, 8);
@@ -693,33 +715,90 @@ function drawSmoke(ctx: CanvasRenderingContext2D, s: GameState, x: number, y: nu
   }
 }
 
+/** Armour rings on a weapon's body: one per three upgrade levels bought. */
+function drawRank(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: { speed: number; strength: number; range: number }): void {
+  const rings = Math.floor((t.speed + t.strength + t.range) / 3);
+  ctx.strokeStyle = "rgba(233,194,74,0.9)";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < rings; i++) {
+    ctx.beginPath();
+    ctx.arc(x, y, r - 4 - i * 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+/**
+ * Machine gun. Every upgrade shows: Speed adds a barrel (they fire in turn,
+ * each with its own recoil and flash), Damage thickens the barrels and adds a
+ * red muzzle brake, Range lengthens them and adds a scope.
+ */
 function drawMachineGun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
   const t = sl.turret!;
   if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
   const kick = fresh(s, t.lastShot, 0.09);
   const cos = Math.cos(t.aim);
   const sin = Math.sin(t.aim);
-  // Recoil: the whole gun nudges back, the barrel more.
-  const bx = sl.x - cos * kick * 3;
-  const by = sl.y - sin * kick * 3;
+  const px = -sin;
+  const py = cos;
+  const r = cfg.turret.radius + Math.min(3, t.speed + t.strength + t.range) * 0.7;
+  // The body nudges back a little with every shot.
+  const bx = sl.x - cos * kick * 2;
+  const by = sl.y - sin * kick * 2;
   ctx.fillStyle = C.turret;
   ctx.beginPath();
-  ctx.arc(bx, by, cfg.turret.radius, 0, Math.PI * 2);
+  ctx.arc(bx, by, r, 0, Math.PI * 2);
   ctx.fill();
-  const len = cfg.turret.radius + 12 - kick * 7;
-  const tipX = bx + cos * len;
-  const tipY = by + sin * len;
-  ctx.strokeStyle = C.barrel;
-  ctx.lineWidth = 8;
-  ctx.lineCap = "round";
-  ctx.beginPath();
-  ctx.moveTo(bx, by);
-  ctx.lineTo(tipX, tipY);
-  ctx.stroke();
-  ctx.lineCap = "butt";
-  // Muzzle flash: a short bright burst at the tip.
+  drawRank(ctx, bx, by, r, t);
+  const n = barrelCount(sl);
+  const fired = lastBarrel(sl);
+  const spacing = barrelSpacing(sl);
+  const width = n === 1 ? 8 + t.strength : 4 + t.strength * 0.6; // slim enough that separate barrels stay visible
+  const baseLen = cfg.turret.radius + 12 + t.range * 5;
+  let tipX = bx;
+  let tipY = by;
+  for (let i = 0; i < n; i++) {
+    const side = (i - (n - 1) / 2) * spacing;
+    const k = i === fired ? kick : 0;
+    const len = baseLen - k * 7;
+    const ox = bx + px * side;
+    const oy = by + py * side;
+    const ex = ox + cos * len;
+    const ey = oy + sin * len;
+    ctx.strokeStyle = C.barrel;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(ox, oy);
+    ctx.lineTo(ex, ey);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+    if (t.strength > 0) {
+      // Muzzle brake: longer and redder with each Damage level.
+      ctx.strokeStyle = "#c8553d";
+      ctx.lineWidth = width + 3;
+      ctx.beginPath();
+      ctx.moveTo(ex - cos * (3 + t.strength * 2), ey - sin * (3 + t.strength * 2));
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+    }
+    if (i === fired) {
+      tipX = ex;
+      tipY = ey;
+    }
+  }
+  if (t.range > 0) {
+    // Scope on the body, bigger per Range level.
+    ctx.fillStyle = "#7fb0d8";
+    ctx.strokeStyle = "#24281f";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx - cos * 4, by - sin * 4, 3 + t.range, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Muzzle flash on the barrel that fired.
   const flash = fresh(s, t.lastShot, 0.06);
-  if (flash > 0) {
+  if (flash > 0 && t.shots > 0) {
     ctx.fillStyle = C.flash;
     ctx.globalAlpha = flash;
     ctx.beginPath();
@@ -727,8 +806,8 @@ function drawMachineGun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameS
     const fy = tipY + sin * 8;
     for (let i = 0; i < 6; i++) {
       const ang = t.aim + (i * Math.PI) / 3;
-      const r = i % 2 === 0 ? 14 : 6;
-      ctx.lineTo(fx + Math.cos(ang) * r, fy + Math.sin(ang) * r);
+      const rr = (i % 2 === 0 ? 14 : 6) + t.strength * 1.5;
+      ctx.lineTo(fx + Math.cos(ang) * rr, fy + Math.sin(ang) * rr);
     }
     ctx.closePath();
     ctx.fill();
@@ -737,10 +816,14 @@ function drawMachineGun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameS
   drawSmoke(ctx, s, tipX, tipY, t.lastShot, 0.9, 4);
 }
 
+/**
+ * Mortar. Speed adds a tube (they fire in turn, each dropping back on its own
+ * shot); Damage widens the bore and adds a red band.
+ */
 function drawMortar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
   const t = sl.turret!;
   if (sl.hp < sl.maxHp) bar(ctx, sl.x - 30, sl.y - 38, 60, 6, sl.hp / sl.maxHp, C.warn);
-  const m = cfg.mortar.radius;
+  const m = cfg.mortar.radius + Math.min(2, t.speed) * 1.5;
   const kick = fresh(s, t.lastShot, 0.3);
   // The base thumps down when it fires.
   const squash = 1 - 0.12 * kick;
@@ -750,28 +833,51 @@ function drawMortar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState
   roundRect(ctx, sl.x - m / squash, sl.y - m * squash, (m * 2) / squash, m * 2 * squash, 10);
   ctx.fill();
   ctx.stroke();
-  // Short, fat tube pointing at the target; it drops back on firing.
-  const off = 8 - kick * 6;
-  const tx = sl.x + Math.cos(t.aim) * off;
-  const ty = sl.y + Math.sin(t.aim) * off;
-  ctx.fillStyle = C.barrel;
-  ctx.beginPath();
-  ctx.arc(tx, ty, 12 + kick * 2, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = C.walkerEdge;
-  ctx.beginPath();
-  ctx.arc(tx, ty, 6, 0, Math.PI * 2);
-  ctx.fill();
+  drawRank(ctx, sl.x, sl.y, m + 2, t);
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const n = barrelCount(sl);
+  const fired = lastBarrel(sl);
+  const spacing = barrelSpacing(sl);
+  const bore = (n === 1 ? 12 : n === 2 ? 9 : 7) + t.strength;
+  let fx = sl.x;
+  let fy = sl.y;
+  for (let i = 0; i < n; i++) {
+    const side = (i - (n - 1) / 2) * spacing;
+    const k = i === fired && t.shots > 0 ? kick : 0;
+    const off = 8 - k * 6;
+    const tx = sl.x + cos * off - sin * side;
+    const ty = sl.y + sin * off + cos * side;
+    ctx.fillStyle = C.barrel;
+    ctx.beginPath();
+    ctx.arc(tx, ty, bore + k * 2, 0, Math.PI * 2);
+    ctx.fill();
+    if (t.strength > 0) {
+      ctx.strokeStyle = "#c8553d";
+      ctx.lineWidth = 1 + t.strength;
+      ctx.beginPath();
+      ctx.arc(tx, ty, bore - 1, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.fillStyle = C.walkerEdge;
+    ctx.beginPath();
+    ctx.arc(tx, ty, bore * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    if (i === fired) {
+      fx = tx;
+      fy = ty;
+    }
+  }
   const flash = fresh(s, t.lastShot, 0.14);
   if (flash > 0) {
     ctx.fillStyle = C.flash;
     ctx.globalAlpha = flash;
     ctx.beginPath();
-    ctx.arc(tx, ty, 10 + (1 - flash) * 16, 0, Math.PI * 2);
+    ctx.arc(fx, fy, 10 + (1 - flash) * 16, 0, Math.PI * 2);
     ctx.fill();
     ctx.globalAlpha = 1;
   }
-  drawSmoke(ctx, s, tx, ty, t.lastShot, 1.4, 7);
+  drawSmoke(ctx, s, fx, fy, t.lastShot, 1.4, 7);
 }
 
 /** A landed shell: flash, shockwave ring, flying debris, then smoke. */
@@ -911,26 +1017,40 @@ function drawGatling(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
   ctx.stroke();
   // Barrel cluster: six barrels seen from above, their sideways offset follows
   // the spin angle so the cluster visibly rotates.
+  // Upgrades show: Speed adds barrels to the cluster and an ammo drum,
+  // Damage thickens the barrels and reddens the collars.
   const len = r + 16;
   const px = -sin;
   const py = cos;
   const heat = t.spin;
-  for (let i = 0; i < 6; i++) {
-    const a = t.barrel + (i / 6) * Math.PI * 2;
-    const off = Math.sin(a) * 6;
+  drawRank(ctx, bx, by, r, t);
+  const barrels = 6 + t.speed;
+  const cluster = 6 + t.speed * 0.8;
+  for (let d = 0; d < t.speed; d++) {
+    ctx.fillStyle = "#4b5245";
+    ctx.strokeStyle = C.walkerEdge;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx - cos * 6 + px * (r - 2) * (d % 2 === 0 ? 1 : -1), by - sin * 6 + py * (r - 2) * (d % 2 === 0 ? 1 : -1), 6 + (d > 1 ? 2 : 0), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  for (let i = 0; i < barrels; i++) {
+    const a = t.barrel + (i / barrels) * Math.PI * 2;
+    const off = Math.sin(a) * cluster;
     const depth = Math.cos(a); // front barrels drawn brighter
     const shade = Math.round(150 + 70 * depth);
     const hot = Math.round(heat * 90 * (0.5 + 0.5 * depth));
     ctx.strokeStyle = `rgb(${Math.min(255, shade + hot)},${shade - Math.round(hot * 0.3)},${shade - hot})`;
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 3 + t.strength * 0.6;
     ctx.beginPath();
     ctx.moveTo(bx + px * off + cos * 6, by + py * off + sin * 6);
     ctx.lineTo(bx + px * off + cos * len, by + py * off + sin * len);
     ctx.stroke();
   }
   // Barrel collars.
-  ctx.strokeStyle = "#3a3f36";
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = t.strength > 0 ? "#c8553d" : "#3a3f36";
+  ctx.lineWidth = 3 + t.strength;
   for (const f of [0.55, 0.95]) {
     ctx.beginPath();
     ctx.moveTo(bx + cos * len * f + px * 8, by + sin * len * f + py * 8);
@@ -956,49 +1076,78 @@ function drawGatling(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
   drawSmoke(ctx, s, tipX, tipY, t.lastShot, 1.1, 4 + 3 * heat);
 }
 
+/**
+ * Rocket launcher. Starts with two tubes that fire in turn; Speed adds a tube
+ * each level. Only the tube that fired kicks back. Damage adds red warhead
+ * bands and bigger rockets.
+ */
 function drawRocketLauncher(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
   const t = sl.turret!;
   if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 34, 52, 6, sl.hp / sl.maxHp, C.warn);
-  const r = cfg.rocket.radius;
+  const n = barrelCount(sl);
+  const r = cfg.rocket.radius + (n - 2) * 3;
   const cos = Math.cos(t.aim);
   const sin = Math.sin(t.aim);
   const px = -sin;
   const py = cos;
   const kick = fresh(s, t.lastShot, 0.35);
-  // Base plate.
+  const fired = lastBarrel(sl);
+  const spacing = barrelSpacing(sl);
+  // Base plate, wider with more tubes.
   ctx.fillStyle = "#6f7564";
   ctx.strokeStyle = C.walkerEdge;
   ctx.lineWidth = 3;
   roundRect(ctx, sl.x - r, sl.y - r, r * 2, r * 2, 6);
   ctx.fill();
   ctx.stroke();
-  // Twin tubes, kicking back when one fires.
-  const back = kick * 6;
-  for (const side of [-1, 1]) {
-    const ox = sl.x + px * side * 7 - cos * back;
-    const oy = sl.y + py * side * 7 - sin * back;
+  drawRank(ctx, sl.x, sl.y, r + 2, t);
+  const tubeW = n <= 2 ? 10 : n === 3 ? 9 : 8;
+  let fx = sl.x;
+  let fy = sl.y;
+  for (let i = 0; i < n; i++) {
+    const side = (i - (n - 1) / 2) * spacing;
+    const justFired = i === fired && t.shots > 0;
+    const back = justFired ? kick * 7 : 0;
+    const ox = sl.x + px * side - cos * back;
+    const oy = sl.y + py * side - sin * back;
     ctx.strokeStyle = "#3c4436";
-    ctx.lineWidth = 10;
+    ctx.lineWidth = tubeW;
     ctx.beginPath();
     ctx.moveTo(ox - cos * 14, oy - sin * 14);
     ctx.lineTo(ox + cos * 18, oy + sin * 18);
     ctx.stroke();
     ctx.strokeStyle = "#c7cbbd";
-    ctx.lineWidth = 6;
+    ctx.lineWidth = tubeW - 4;
     ctx.beginPath();
     ctx.moveTo(ox - cos * 12, oy - sin * 12);
     ctx.lineTo(ox + cos * 16, oy + sin * 16);
     ctx.stroke();
-    ctx.fillStyle = "#24281f";
+    // Warhead bands: one per Damage level.
+    ctx.strokeStyle = "#c8553d";
+    ctx.lineWidth = tubeW - 2;
+    for (let b = 0; b < t.strength; b++) {
+      const d = 8 - b * 6;
+      ctx.beginPath();
+      ctx.moveTo(ox + cos * d, oy + sin * d);
+      ctx.lineTo(ox + cos * (d + 3), oy + sin * (d + 3));
+      ctx.stroke();
+    }
+    // A loaded tube shows its rocket's nose; the one that just fired is empty.
+    const empty = justFired && kick > 0.05;
+    ctx.fillStyle = empty ? "#24281f" : "#c8553d";
     ctx.beginPath();
-    ctx.arc(ox + cos * 17, oy + sin * 17, 3, 0, Math.PI * 2);
+    ctx.arc(ox + cos * 17, oy + sin * 17, empty ? 3 : 3.5, 0, Math.PI * 2);
     ctx.fill();
+    if (i === fired) {
+      fx = ox;
+      fy = oy;
+    }
   }
-  // Back-blast: a cone of fire and smoke behind the launcher right after firing.
+  // Back-blast behind the tube that fired.
   const blastK = fresh(s, t.lastShot, 0.45);
-  if (blastK > 0) {
-    const bx = sl.x - cos * (r + 6);
-    const by = sl.y - sin * (r + 6);
+  if (blastK > 0 && t.shots > 0) {
+    const bx = fx - cos * 16;
+    const by = fy - sin * 16;
     for (let i = 0; i < 4; i++) {
       const d = (1 - blastK) * 30 + i * 7;
       ctx.fillStyle = i === 0 && blastK > 0.6 ? `rgba(255,200,110,${blastK.toFixed(3)})` : `${C.smoke}${(0.35 * blastK).toFixed(3)})`;
@@ -1007,7 +1156,7 @@ function drawRocketLauncher(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: G
       ctx.fill();
     }
   }
-  drawSmoke(ctx, s, sl.x + cos * 18, sl.y + sin * 18, t.lastShot, 1.0, 5);
+  drawSmoke(ctx, s, fx + cos * 18, fy + sin * 18, t.lastShot, 1.0, 5);
 }
 
 /** Deterministic 0..1 from a seed and an index (shapes must not flicker). */

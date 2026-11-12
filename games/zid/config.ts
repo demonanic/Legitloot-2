@@ -191,6 +191,8 @@ export interface GameConfig {
     /** Rebuilding rubble (with its upgrades) costs this share of what was spent. */
     rubbleShare: number;
     strongholdCostPerHp: number;
+    /** Repairs and re-arming during an assault cost this many times the normal price. */
+    assaultMultiplier: number;
   };
   recycle: { intactShare: number; rubbleShare: number };
   /** Zombies take any open route; a blocked tile costs this much (plus its health) to path through. */
@@ -315,7 +317,7 @@ export const baseConfig: GameConfig = {
   trapDamagePerBaseLevel: 0.6,
   unlocks: { "machine-gun": 1, mortar: 1, barricade: 1, mine: 1, tripwire: 2, gatling: 3, rocket: 4 },
   barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
-  repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25 },
+  repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25, assaultMultiplier: 1.5 },
   recycle: { intactShare: 0.5, rubbleShare: 0.25 },
   pathing: { blockedTileCost: 1000 },
   upgrades: {
@@ -356,7 +358,7 @@ export const baseConfig: GameConfig = {
   },
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
-  pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.45, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
+  pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.55, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
   boost: { killsToFill: 90, overdrive: { seconds: 8, fireRate: 2 }, bounty: { seconds: 12, drops: 3 } },
   balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 15 },
 };

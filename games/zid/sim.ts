@@ -30,6 +30,8 @@ export interface Turret {
   aimPoint: { x: number; y: number } | null;
   /** Game time of the last shot, for recoil, flash and smoke. */
   lastShot: number;
+  /** Shots fired so far; picks which barrel or tube fires next. */
+  shots: number;
   /** Gatling only: 0..1 how far spun up, and the barrel angle for drawing. */
   spin: number;
   barrel: number;
@@ -516,7 +518,7 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
     spent: cost,
     reinforce: 0,
     turret: TURRET_KINDS.includes(kind)
-      ? { cooldown: 0, speed: 0, strength: 0, range: 0, aim: -Math.PI / 2, targetId: null, aimPoint: null, lastShot: -1e9, spin: 0, barrel: 0 }
+      ? { cooldown: 0, speed: 0, strength: 0, range: 0, aim: -Math.PI / 2, targetId: null, aimPoint: null, lastShot: -1e9, shots: 0, spin: 0, barrel: 0 }
       : null,
     facing,
   };
@@ -655,11 +657,12 @@ export interface RepairQuote {
  */
 export function repairQuote(s: GameState, cfg: GameConfig, target: RepairTarget): RepairQuote | ManageRejection {
   if (s.phase === "lost") return "run-over";
-  if (s.phase === "wave") return "assault-active";
+  // Emergency work during an assault is allowed, at a higher price.
+  const mult = s.phase === "wave" ? cfg.repair.assaultMultiplier : 1;
   if (target.kind === "stronghold") {
     const missing = s.stronghold.maxHp - s.stronghold.hp;
     if (missing <= 0) return "nothing-to-repair";
-    const per = cfg.repair.strongholdCostPerHp;
+    const per = cfg.repair.strongholdCostPerHp * mult;
     const hp = Math.min(missing, Math.floor(s.currency / per));
     if (hp <= 0) return "insufficient-funds";
     return { hp, cost: Math.ceil(hp * per), rebuild: false };
@@ -667,19 +670,19 @@ export function repairQuote(s: GameState, cfg: GameConfig, target: RepairTarget)
   const st = structureById(s, target.id);
   if (!st) return "no-such-structure";
   if (st.destroyed) {
-    const cost = Math.ceil(st.spent * cfg.repair.rubbleShare);
+    const cost = Math.ceil(st.spent * cfg.repair.rubbleShare * mult);
     if (s.currency < cost) return "insufficient-funds";
     return { hp: st.maxHp, cost, rebuild: true };
   }
   const missing = st.maxHp - st.hp;
   if (missing <= 0) return "nothing-to-repair";
-  const per = (st.spent * cfg.repair.structureShare) / st.maxHp;
+  const per = ((st.spent * cfg.repair.structureShare) / st.maxHp) * mult;
   const hp = per > 0 ? Math.min(missing, Math.floor(s.currency / per)) : missing;
   if (hp <= 0) return "insufficient-funds";
   return { hp, cost: Math.ceil(hp * per), rebuild: false };
 }
 
-/** Repair the stronghold or a structure (including rebuilding rubble). Preparation only. */
+/** Repair the stronghold or a structure (including rebuilding rubble and re-arming traps). Costs more during an assault. */
 export function repair(s: GameState, cfg: GameConfig, target: RepairTarget): ManageResult {
   const q = repairQuote(s, cfg, target);
   if (typeof q === "string") return { ok: false, reason: q };
@@ -857,6 +860,34 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
     }
   }
   return best;
+}
+
+/**
+ * How many barrels (machine gun), tubes (mortar, rocket launcher) a weapon
+ * shows. Each Speed level adds one; they fire in turn.
+ */
+export function barrelCount(st: Structure): number {
+  const speed = st.turret?.speed ?? 0;
+  if (st.kind === "rocket") return 2 + speed;
+  if (st.kind === "machine-gun" || st.kind === "mortar") return 1 + speed;
+  return 1;
+}
+
+/** Sideways spacing between neighbouring barrels, in world units. */
+export function barrelSpacing(st: Structure): number {
+  return st.kind === "rocket" ? 12 : st.kind === "mortar" ? 13 : 7;
+}
+
+/** Which barrel fired last (0-based, left to right). */
+export function lastBarrel(st: Structure): number {
+  const n = barrelCount(st);
+  return (((st.turret?.shots ?? 0) - 1) % n + n) % n;
+}
+
+/** Sideways offset of the barrel that fired last, relative to the weapon's centre line. */
+function barrelOffset(st: Structure, _tur: Turret): number {
+  const n = barrelCount(st);
+  return (lastBarrel(st) - (n - 1) / 2) * barrelSpacing(st);
 }
 
 /** A machine gun's reach after Range upgrades (mortars use their own fixed range). */
@@ -1168,12 +1199,18 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
     while (tur.cooldown <= 0) {
       tur.cooldown += interval;
       tur.lastShot = s.time;
+      tur.shots++;
       if (s.projectiles.length >= cfg.limits.maxProjectiles) continue;
-      const cos = Math.cos(tur.aim);
-      const sin = Math.sin(tur.aim);
+      // Each barrel fires in turn from its own muzzle, straight at the target.
+      const side = barrelOffset(slot, tur);
+      const mx = slot.x + Math.cos(tur.aim) * t.radius - Math.sin(tur.aim) * side;
+      const my = slot.y + Math.sin(tur.aim) * t.radius + Math.cos(tur.aim) * side;
+      const shot = Math.atan2(target.y - my, target.x - mx);
+      const cos = Math.cos(shot);
+      const sin = Math.sin(shot);
       s.projectiles.push({
-        x: slot.x + cos * t.radius,
-        y: slot.y + sin * t.radius,
+        x: mx,
+        y: my,
         vx: cos * t.projectileSpeed,
         vy: sin * t.projectileSpeed,
         damage: stats.damage,
@@ -1204,12 +1241,14 @@ function stepRocketLauncher(s: GameState, cfg: GameConfig, slot: Structure, tur:
   tur.cooldown += 1 / stats.fireRate;
   if (tur.cooldown < 0) tur.cooldown = 0;
   tur.lastShot = s.time;
+  tur.shots++;
   const cos = Math.cos(tur.aim);
   const sin = Math.sin(tur.aim);
+  const side = barrelOffset(slot, tur);
   const splash = r.splashDamage * (1 + cfg.upgrades.strength.perLevel * tur.strength);
   s.rockets.push({
-    x: slot.x + cos * r.radius,
-    y: slot.y + sin * r.radius,
+    x: slot.x + cos * r.radius - sin * side,
+    y: slot.y + sin * r.radius + cos * side,
     vx: cos * r.speed,
     vy: sin * r.speed,
     targetId: target.id,
@@ -1358,6 +1397,7 @@ function stepMortar(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret,
   if (tur.cooldown < 0) tur.cooldown = 0;
   tur.lastShot = s.time;
   const flight = m.shellBaseSeconds + Math.hypot(target.x - slot.x, target.y - slot.y) / m.shellSpeed;
+  tur.shots++;
   s.shells.push({ sx: slot.x, sy: slot.y, tx: target.x, ty: target.y, total: flight, left: flight, damage: stats.damage, radius: m.blastRadius });
   s.shotsFired++;
 }

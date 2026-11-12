@@ -50,7 +50,14 @@ const renderer = createRenderer(canvas, {
 
 let state: GameState = newRun();
 // The build menu remembers its last page, so placing several traps in a row is quick.
-const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons" };
+function savedRanges(): boolean {
+  try {
+    return localStorage.getItem("zid.ranges") !== "off";
+  } catch {
+    return true;
+  }
+}
+const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons", showRanges: savedRanges() };
 let showDiag = params.has("diag") || stress;
 
 function newRun(): GameState {
@@ -130,6 +137,14 @@ const regions = uiRegions(cfg, () => state, () => view, {
     view.selected = null;
     view.recycleArmedUntil = 0;
   },
+  toggleRanges: () => {
+    view.showRanges = !view.showRanges;
+    try {
+      localStorage.setItem("zid.ranges", view.showRanges ? "on" : "off");
+    } catch {
+      // Storage unavailable: the choice just lasts for this visit.
+    }
+  },
   toggleDiagnostics: () => {
     showDiag = !showDiag;
   },
@@ -149,6 +164,12 @@ bindTaps(canvas, renderer.toWorld, (p) => {
       return;
     }
     if (state.phase === "wave") {
+      // Tapping the stronghold or something you built opens emergency repairs.
+      if (tile && (structureAt(state, tile.col, tile.row) || overlapsStronghold(cfg, tile.col, tile.row))) {
+        view.selected = tile;
+        return;
+      }
+      view.selected = null;
       // With mortars on the field, each tap aims one mortar (split fire);
       // tapping a crosshair hands that mortar back to automatic.
       if (state.structures.some((st) => st.kind === "mortar" && !st.destroyed)) {
@@ -157,8 +178,7 @@ bindTaps(canvas, renderer.toWorld, (p) => {
         else if (!res.ok && res.reason === "out-of-reach") toast("No mortar can reach there");
         return;
       }
-      if (tile && structureAt(state, tile.col, tile.row)) toast(MANAGE_MESSAGES["assault-active"]);
-      else if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
+      if (status !== "out-of-bounds" && status !== "outside-perimeter") toast(BUILD_MESSAGES["assault-active"]);
       return;
     }
     if (state.phase === "lost") return;
@@ -175,7 +195,12 @@ const loop = createLoop({
   stepHz: 30,
   update: (dt) => {
     step(state, cfg, dt);
-    if (state.phase === "wave" || state.phase === "lost") view.selected = null;
+    if (state.phase === "lost") view.selected = null;
+    else if (state.phase === "wave" && view.selected) {
+      // Only things that can be repaired stay selected once the assault starts.
+      const t = view.selected;
+      if (!structureAt(state, t.col, t.row) && !overlapsStronghold(cfg, t.col, t.row)) view.selected = null;
+    }
   },
   render: () => {
     renderer.beginFrame();

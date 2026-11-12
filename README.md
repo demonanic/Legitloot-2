@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Emergency repairs and upgrade looks
+
+- **Mid-wave spending:** during an assault, tap the stronghold or anything you built to repair it, rebuild rubble or re-arm a spent trap, at 50% more than the between-waves price. Building, upgrading and recycling still wait for the gap between waves.
+- **Upgrades you can see:** each Speed level adds a barrel (machine gun) or tube (mortar, rocket launcher; the launcher starts with two) and they fire in turn, each with its own recoil; the Gatling gains barrels and ammo drums. Damage adds red muzzle brakes, bands and wider bores. Range lengthens machine-gun barrels and adds a scope. A gold ring appears on the body per three levels bought.
+- **Range rings toggle** under the FPS button; the choice is remembered. A selected weapon still shows its own ring.
+- Health pickups are a touch more common (55% of pickups while the stronghold is damaged, was 45%).
+
 ### Pickups and boosts update
 
 - **Pickups:** during an assault a green cross or a gold $ appears inside the fence every 10 to 18 seconds. Tap it within 7 seconds: the cross repairs 10% of the stronghold at once, the $ adds 12 to 25 Supplies. Health pickups only appear while the stronghold is damaged.

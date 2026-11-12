@@ -206,3 +206,46 @@ test("balance: with pickups and boosts, the sensible player still falls inside t
   const median = (waves[5]! + waves[6]!) / 2;
   assert.ok(median >= cfg.balance.typicalDefeatWaveMin && median <= cfg.balance.typicalDefeatWaveMax, `median ${median}: ${waves}`);
 });
+
+test("barrels: each Speed level adds one, and they fire in turn", async () => {
+  const { barrelCount, lastBarrel, upgradeTurret, buildStructure } = await import("../games/zid/sim.js");
+  const s = createState(cfg, 1);
+  s.currency = 10_000;
+  s.stronghold.level = 3;
+  const mg = buildStructure(s, cfg, "machine-gun", 4, 5);
+  const rk = buildStructure(s, cfg, "rocket", 5, 5);
+  assert.ok(mg.ok && rk.ok);
+  assert.equal(barrelCount(mg.structure), 1);
+  assert.equal(barrelCount(rk.structure), 2);
+  upgradeTurret(s, cfg, rk.structure.id, "speed");
+  upgradeTurret(s, cfg, mg.structure.id, "speed");
+  assert.equal(barrelCount(rk.structure), 3);
+  assert.equal(barrelCount(mg.structure), 2);
+  const seen: number[] = [];
+  for (let i = 1; i <= 6; i++) {
+    rk.structure.turret!.shots = i;
+    seen.push(lastBarrel(rk.structure));
+  }
+  assert.deepEqual(seen, [0, 1, 2, 0, 1, 2]);
+});
+
+test("barrels: a multi-barrel gun still hits what it aims at", async () => {
+  const { upgradeTurret, buildStructure } = await import("../games/zid/sim.js");
+  const s = createState({ ...cfg, pickups: { ...cfg.pickups, everyMax: 0 } }, 1);
+  s.currency = 10_000;
+  const mg = buildStructure(s, cfg, "machine-gun", 4, 5);
+  assert.ok(mg.ok);
+  for (let i = 0; i < 3; i++) upgradeTurret(s, cfg, mg.structure.id, "speed");
+  startWaveNow(s, cfg);
+  s.nextSpawn = s.spawns.length;
+  const e = { id: s.nextEnemyId++, type: "runner" as const, maxHp: 1e9, x: mg.structure.x + 40, y: mg.structure.y - 150, hp: 1e9, attackCooldown: 1e9, attacking: false };
+  s.enemies.push(e);
+  for (let i = 0; i < 3 * 30; i++) {
+    step(s, cfg, DT);
+    e.x = mg.structure.x + 40;
+    e.y = mg.structure.y - 150;
+  }
+  const hits = (1e9 - e.hp) / cfg.turret.damage;
+  assert.ok(s.shotsFired >= 30);
+  assert.ok(hits >= s.shotsFired * 0.9, `${hits} hits of ${s.shotsFired} shots`);
+});

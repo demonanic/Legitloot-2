@@ -37,6 +37,15 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Airstrike, force field, shotgun, flamethrower
+
+- **Four boosts** on the charge meter. Overdrive and Bounty from the start; **Airstrike** at base level 2; **Force field** at base level 3. Locked ones show the level they need.
+- **Airstrike:** crosshairs mark a line of up to nine drop zones through the thickest crowd, heading for the next-thickest, then a bomber's shadow crosses and the bombs land in sequence. No bomb is placed on the stronghold, and bombs hurt only zombies. Each bomb does three times a walker's health for the current wave.
+- **Force field:** for 6 seconds the stronghold takes no damage and regains 4% of its health per second.
+- **Shotgun** (60, base level 2): short range, a fan of six pellets per shot. Two barrels, plus one per Speed level.
+- **Flamethrower** (110, base level 3): very short range; burns every zombie in its cone and sets them alight for 2.5 seconds. Speed adds fuel tanks, Damage a wider nozzle and hotter flame.
+- The build menu has three pages: Weapons, More weapons (close range), Traps & walls.
+
 ### Emergency repairs and upgrade looks
 
 - **Mid-wave spending:** during an assault, tap the stronghold or anything you built to repair it, rebuild rubble or re-arm a spent trap, at 50% more than the between-waves price. Building, upgrading and recycling still wait for the gap between waves.

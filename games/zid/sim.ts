@@ -37,10 +37,10 @@ export interface Turret {
   barrel: number;
 }
 
-export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "barricade" | "mine" | "tripwire";
-export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar"];
+export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "barricade" | "mine" | "tripwire";
+export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer"];
 export const TRAP_KINDS: readonly StructureKind[] = ["mine", "tripwire"];
-export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "mine", "tripwire", "barricade"];
+export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "mine", "tripwire", "barricade"];
 
 export function isTrap(kind: StructureKind): boolean {
   return kind === "mine" || kind === "tripwire";
@@ -50,6 +50,8 @@ export function isTrap(kind: StructureKind): boolean {
 export const KIND_NAMES: Record<StructureKind, string> = {
   "machine-gun": "Machine gun",
   gatling: "Gatling gun",
+  shotgun: "Shotgun",
+  flamer: "Flamethrower",
   rocket: "Rocket launcher",
   mortar: "Mortar",
   barricade: "Barricade",
@@ -140,7 +142,18 @@ export interface Pickup {
   life: number;
 }
 
-export type BoostKind = "overdrive" | "bounty";
+export type BoostKind = "overdrive" | "bounty" | "airstrike" | "shield";
+export const BOOST_KINDS: readonly BoostKind[] = ["overdrive", "bounty", "airstrike", "shield"];
+
+/** One bomb of an airstrike: a marked drop zone that goes off when `delay` runs out. */
+export interface Bomb {
+  x: number;
+  y: number;
+  delay: number;
+  total: number;
+  damage: number;
+  radius: number;
+}
 export const SPLAT_SECONDS = 5;
 
 /** A brief explosion marker, for drawing only. */
@@ -160,6 +173,9 @@ export interface Enemy {
   hp: number;
   attackCooldown: number;
   attacking: boolean;
+  /** Seconds left on fire, and the damage per second while burning. */
+  burn?: number;
+  burnDps?: number;
 }
 
 export interface Projectile {
@@ -220,6 +236,10 @@ export interface GameState {
   charge: number;
   /** The boost running now, if any. */
   boost: { kind: BoostKind; left: number; total: number } | null;
+  /** Airstrike bombs still to land. */
+  bombs: Bomb[];
+  /** The bomber's pass, for drawing only: from, to, and progress. */
+  flyover: { x0: number; y0: number; x1: number; y1: number; t: number; total: number } | null;
   spawns: Spawn[];
   nextSpawn: number;
   nextEnemyId: number;
@@ -286,6 +306,8 @@ export function createState(cfg: GameConfig, seed: number): GameState {
     pickupRng: (seed ^ 0x51ed27) | 0,
     charge: 0,
     boost: null,
+    bombs: [],
+    flyover: null,
     spawns: [],
     nextSpawn: 0,
     nextEnemyId: 1,
@@ -375,6 +397,10 @@ export function buildCost(cfg: GameConfig, kind: StructureKind): number {
       return cfg.mortar.cost;
     case "gatling":
       return cfg.gatling.cost;
+    case "shotgun":
+      return cfg.shotgun.cost;
+    case "flamer":
+      return cfg.flamer.cost;
     case "rocket":
       return cfg.rocket.cost;
     case "mine":
@@ -394,6 +420,10 @@ function kindMaxHp(cfg: GameConfig, kind: StructureKind): number {
       return cfg.mortar.maxHp;
     case "gatling":
       return cfg.gatling.maxHp;
+    case "shotgun":
+      return cfg.shotgun.maxHp;
+    case "flamer":
+      return cfg.flamer.maxHp;
     case "rocket":
       return cfg.rocket.maxHp;
     case "mine":
@@ -437,6 +467,10 @@ export function buildLimit(s: GameState, cfg: GameConfig, kind: StructureKind): 
       return lvl.mortars;
     case "gatling":
       return lvl.gatlings;
+    case "shotgun":
+      return lvl.shotguns;
+    case "flamer":
+      return lvl.flamers;
     case "rocket":
       return lvl.rockets;
     case "mine":
@@ -569,7 +603,7 @@ export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePat
   const base = costs[level]!;
   // Heavier weapons' upgrades cost more, rounded to a multiple of 5.
   const mult =
-    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : 1;
+    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : st.kind === "shotgun" ? cfg.shotgun.upgradeCostMultiplier : st.kind === "flamer" ? cfg.flamer.upgradeCostMultiplier : 1;
   return mult === 1 ? base : Math.round((base * mult) / 5) * 5;
 }
 
@@ -725,9 +759,13 @@ export function damageStructure(s: GameState, st: Structure, amount: number): bo
 /** Effective shots per second and damage per shot for a turret or mortar, after upgrades. */
 export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "machine-gun"): { fireRate: number; damage: number } {
   const g = cfg.gatling;
-  const rate =
-    kind === "mortar" ? cfg.mortar.fireRate : kind === "rocket" ? cfg.rocket.fireRate : kind === "gatling" ? g.minRate + (g.maxRate - g.minRate) * t.spin : cfg.turret.fireRate;
-  const dmg = kind === "mortar" ? cfg.mortar.damage : kind === "rocket" ? cfg.rocket.damage : kind === "gatling" ? g.damage : cfg.turret.damage;
+  let rate = cfg.turret.fireRate;
+  let dmg = cfg.turret.damage;
+  if (kind === "mortar") [rate, dmg] = [cfg.mortar.fireRate, cfg.mortar.damage];
+  else if (kind === "rocket") [rate, dmg] = [cfg.rocket.fireRate, cfg.rocket.damage];
+  else if (kind === "gatling") [rate, dmg] = [g.minRate + (g.maxRate - g.minRate) * t.spin, g.damage];
+  else if (kind === "shotgun") [rate, dmg] = [cfg.shotgun.fireRate, cfg.shotgun.damage];
+  else if (kind === "flamer") [rate, dmg] = [cfg.flamer.fireRate, cfg.flamer.damage];
   return {
     fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed),
     damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength),
@@ -868,14 +906,14 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
  */
 export function barrelCount(st: Structure): number {
   const speed = st.turret?.speed ?? 0;
-  if (st.kind === "rocket") return 2 + speed;
+  if (st.kind === "rocket" || st.kind === "shotgun") return 2 + speed;
   if (st.kind === "machine-gun" || st.kind === "mortar") return 1 + speed;
   return 1;
 }
 
 /** Sideways spacing between neighbouring barrels, in world units. */
 export function barrelSpacing(st: Structure): number {
-  return st.kind === "rocket" ? 12 : st.kind === "mortar" ? 13 : 7;
+  return st.kind === "rocket" ? 12 : st.kind === "mortar" ? 13 : st.kind === "shotgun" ? 8 : 7;
 }
 
 /** Which barrel fired last (0-based, left to right). */
@@ -895,6 +933,8 @@ export function turretRange(cfg: GameConfig, st: Structure): number {
   if (st.kind === "mortar") return cfg.mortar.range;
   if (st.kind === "gatling") return cfg.gatling.range;
   if (st.kind === "rocket") return cfg.rocket.range;
+  if (st.kind === "shotgun") return cfg.shotgun.range;
+  if (st.kind === "flamer") return cfg.flamer.range;
   return cfg.turret.range * (1 + cfg.upgrades.range.perLevel * (st.turret?.range ?? 0));
 }
 
@@ -931,6 +971,32 @@ function pickupRandom(s: GameState): number {
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** Airstrike bombs count down and go off, hitting every zombie in the blast. Structures and the stronghold are never hurt. */
+function stepBombs(s: GameState, cfg: GameConfig, dt: number): void {
+  if (s.flyover) {
+    s.flyover.t += dt;
+    if (s.flyover.t >= s.flyover.total) s.flyover = null;
+  }
+  if (s.bombs.length === 0) return;
+  const kept: Bomb[] = [];
+  for (const b of s.bombs) {
+    b.delay -= dt;
+    if (b.delay > 0) {
+      kept.push(b);
+      continue;
+    }
+    const r2 = b.radius * b.radius;
+    for (const e of s.enemies) {
+      if (e.hp <= 0) continue;
+      const dx = e.x - b.x;
+      const dy = e.y - b.y;
+      if (dx * dx + dy * dy <= r2) damageEnemy(s, cfg, e, b.damage);
+    }
+    s.blasts.push({ x: b.x, y: b.y, r: b.radius, life: BLAST_SECONDS });
+  }
+  s.bombs = kept;
 }
 
 /** Pickups appear only during an assault, on a random tile inside the fence, and fade. */
@@ -986,14 +1052,91 @@ export function collectPickup(s: GameState, cfg: GameConfig, id: number): { ok: 
   return { ok: true, kind: p.kind, amount };
 }
 
-export type BoostRejection = "not-in-assault" | "not-charged" | "already-active";
+export type BoostRejection = "not-in-assault" | "not-charged" | "already-active" | "locked";
+
+/** Base level a boost needs (1 = from the start). */
+export function boostUnlockLevel(cfg: GameConfig, kind: BoostKind): number {
+  return kind === "airstrike" ? cfg.boost.airstrike.unlockBase : kind === "shield" ? cfg.boost.shield.unlockBase : 1;
+}
+export function boostUnlocked(s: GameState, cfg: GameConfig, kind: BoostKind): boolean {
+  return s.stronghold.level + 1 >= boostUnlockLevel(cfg, kind);
+}
+
+/**
+ * Plan an airstrike: a straight line of drop zones through the thickest
+ * crowd, pointed at the next-thickest one, skipping any spot whose blast
+ * would touch the stronghold.
+ */
+export function planAirstrike(s: GameState, cfg: GameConfig): { x: number; y: number }[] {
+  const a = cfg.boost.airstrike;
+  const sh = s.stronghold;
+  const alive = s.enemies.filter((e) => e.hp > 0);
+  const crowd = (x: number, y: number) => alive.reduce((n, e) => n + (Math.hypot(e.x - x, e.y - y) <= a.radius ? 1 : 0), 0);
+  let p = { x: sh.x, y: sh.y - 300 };
+  let best = -1;
+  for (const e of alive) {
+    const c = crowd(e.x, e.y);
+    if (c > best) {
+      best = c;
+      p = { x: e.x, y: e.y };
+    }
+  }
+  // Direction: toward the thickest crowd that is far enough away to give the line a heading.
+  let q: { x: number; y: number } | null = null;
+  best = -1;
+  for (const e of alive) {
+    if (Math.hypot(e.x - p.x, e.y - p.y) < a.spacing * 2) continue;
+    const c = crowd(e.x, e.y);
+    if (c > best) {
+      best = c;
+      q = { x: e.x, y: e.y };
+    }
+  }
+  // With no second crowd, fly across the approach: at right angles to the line from the stronghold.
+  let ang = q ? Math.atan2(q.y - p.y, q.x - p.x) : Math.atan2(p.y - sh.y, p.x - sh.x) + Math.PI / 2;
+  if (!Number.isFinite(ang)) ang = 0;
+  const keepOut = sh.halfSize * Math.SQRT2 + a.radius * 0.6;
+  const zones: { x: number; y: number }[] = [];
+  // Start the line so that P and (if any) Q both fall inside it.
+  const span = (a.bombs - 1) * a.spacing;
+  const lead = q ? Math.min(span - a.spacing, Math.max(a.spacing, (span - Math.hypot(q.x - p.x, q.y - p.y)) / 2)) : span / 2;
+  for (let i = 0; i < a.bombs; i++) {
+    const d = i * a.spacing - lead;
+    const x = p.x + Math.cos(ang) * d;
+    const y = p.y + Math.sin(ang) * d;
+    if (x < 0 || y < 0 || x > cfg.world.width || y > cfg.world.height) continue;
+    if (Math.hypot(x - sh.x, y - sh.y) < keepOut) continue;
+    zones.push({ x, y });
+  }
+  return zones;
+}
 
 /** Spend a full charge meter on a boost. Assault only. */
 export function activateBoost(s: GameState, cfg: GameConfig, kind: BoostKind): { ok: true } | { ok: false; reason: BoostRejection } {
   if (s.phase !== "wave") return { ok: false, reason: "not-in-assault" };
   if (s.boost) return { ok: false, reason: "already-active" };
   if (s.charge < 1) return { ok: false, reason: "not-charged" };
-  const seconds = cfg.boost[kind].seconds;
+  if (!boostUnlocked(s, cfg, kind)) return { ok: false, reason: "locked" };
+  let seconds: number;
+  if (kind === "airstrike") {
+    const a = cfg.boost.airstrike;
+    const zones = planAirstrike(s, cfg);
+    const damage = cfg.enemies.walker.maxHp * wavePlan(cfg, s.wave).hpMultiplier * a.damageWalkers;
+    zones.forEach((z, i) => {
+      const delay = a.warnSeconds + i * a.interval;
+      s.bombs.push({ x: z.x, y: z.y, delay, total: delay, damage, radius: a.radius });
+    });
+    seconds = a.warnSeconds + a.bombs * a.interval + 0.3;
+    const first = zones[0];
+    const last = zones[zones.length - 1];
+    if (first && last && zones.length > 1) {
+      const ang = Math.atan2(last.y - first.y, last.x - first.x);
+      const over = 500;
+      s.flyover = { x0: first.x - Math.cos(ang) * over, y0: first.y - Math.sin(ang) * over, x1: last.x + Math.cos(ang) * over, y1: last.y + Math.sin(ang) * over, t: 0, total: seconds + 0.6 };
+    }
+  } else {
+    seconds = cfg.boost[kind].seconds;
+  }
   s.charge = 0;
   s.boost = { kind, left: seconds, total: seconds };
   return { ok: true };
@@ -1052,9 +1195,14 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
 
   stepPickups(s, cfg, dt);
   if (s.boost) {
+    if (s.boost.kind === "shield") {
+      s.stronghold.hp = Math.min(s.stronghold.maxHp, s.stronghold.hp + s.stronghold.maxHp * cfg.boost.shield.regenPerSecond * dt);
+    }
     s.boost.left -= dt;
     if (s.boost.left <= 0) s.boost = null;
   }
+  stepBombs(s, cfg, dt);
+  stepBurns(s, cfg, dt);
   stepEnemies(s, cfg, dt);
   stepTraps(s, cfg);
   stepTurrets(s, cfg, s.boost?.kind === "overdrive" ? dt * cfg.boost.overdrive.fireRate : dt);
@@ -1073,6 +1221,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     // Wave cleared: back to preparation for the next one.
     releaseMortars(s);
     s.shells = [];
+    s.bombs = [];
     s.wavesCleared++;
     s.wave++;
     s.rockets = [];
@@ -1130,8 +1279,11 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
     const shGap = distanceToStronghold(s, e.x, e.y) - w.radius;
     if (shGap <= 0) {
       if (attackTick(e, w.attackCooldown, dt)) {
-        s.stronghold.hp -= w.structureDamage;
-        s.damageTaken += w.structureDamage;
+        // The force field soaks up every hit while it runs.
+        if (s.boost?.kind !== "shield") {
+          s.stronghold.hp -= w.structureDamage;
+          s.damageTaken += w.structureDamage;
+        }
       }
       continue;
     }
@@ -1179,6 +1331,14 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       stepRocketLauncher(s, cfg, slot, tur, dt);
       continue;
     }
+    if (slot.kind === "shotgun") {
+      stepShotgun(s, cfg, slot, tur, dt);
+      continue;
+    }
+    if (slot.kind === "flamer") {
+      stepFlamer(s, cfg, slot, tur, dt);
+      continue;
+    }
     const gatling = slot.kind === "gatling";
     const t = gatling ? cfg.gatling : cfg.turret;
     tur.cooldown -= dt;
@@ -1218,6 +1378,88 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       });
       s.shotsFired++;
     }
+  }
+}
+
+/** Shotgun: a fan of short-lived pellets at the nearest threat, barrels firing in turn. */
+function stepShotgun(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const g = cfg.shotgun;
+  const stats = turretStats(cfg, tur, "shotgun");
+  tur.cooldown -= dt;
+  const target = pickTarget(s, cfg, slot, g.range);
+  tur.targetId = target ? target.id : null;
+  if (!target) {
+    if (tur.cooldown < 0) tur.cooldown = 0;
+    return;
+  }
+  tur.aim = Math.atan2(target.y - slot.y, target.x - slot.x);
+  if (tur.cooldown > 0) return;
+  tur.cooldown += 1 / stats.fireRate;
+  if (tur.cooldown < 0) tur.cooldown = 0;
+  tur.lastShot = s.time;
+  tur.shots++;
+  const side = barrelOffset(slot, tur);
+  const mx = slot.x + Math.cos(tur.aim) * g.radius - Math.sin(tur.aim) * side;
+  const my = slot.y + Math.sin(tur.aim) * g.radius + Math.cos(tur.aim) * side;
+  const life = (g.range * 1.15) / g.projectileSpeed;
+  for (let i = 0; i < g.pellets; i++) {
+    if (s.projectiles.length >= cfg.limits.maxProjectiles) break;
+    const a = tur.aim + (g.pellets > 1 ? (i / (g.pellets - 1) - 0.5) * g.spread : 0);
+    s.projectiles.push({ x: mx, y: my, vx: Math.cos(a) * g.projectileSpeed, vy: Math.sin(a) * g.projectileSpeed, damage: stats.damage, life });
+  }
+  s.shotsFired++;
+}
+
+/** Whether a point is inside a flamethrower's cone. */
+function inCone(slot: Structure, aim: number, range: number, halfAngle: number, x: number, y: number, pad: number): boolean {
+  const dx = x - slot.x;
+  const dy = y - slot.y;
+  const d = Math.hypot(dx, dy);
+  if (d > range + pad) return false;
+  let da = Math.atan2(dy, dx) - aim;
+  da = Math.atan2(Math.sin(da), Math.cos(da));
+  return Math.abs(da) <= halfAngle + (d > 0 ? Math.atan2(pad, d) : Math.PI);
+}
+
+/** Flamethrower: each tick burns everything in the cone and sets it alight. */
+function stepFlamer(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const f = cfg.flamer;
+  const stats = turretStats(cfg, tur, "flamer");
+  tur.cooldown -= dt;
+  const target = pickTarget(s, cfg, slot, f.range);
+  tur.targetId = target ? target.id : null;
+  if (!target) {
+    if (tur.cooldown < 0) tur.cooldown = 0;
+    return;
+  }
+  // The nozzle swings toward the target rather than snapping, so the cone sweeps.
+  const want = Math.atan2(target.y - slot.y, target.x - slot.x);
+  let da = want - tur.aim;
+  da = Math.atan2(Math.sin(da), Math.cos(da));
+  const turn = 5 * dt;
+  tur.aim += Math.abs(da) <= turn ? da : Math.sign(da) * turn;
+  tur.lastShot = s.time;
+  while (tur.cooldown <= 0) {
+    tur.cooldown += 1 / stats.fireRate;
+    tur.shots++;
+    s.shotsFired++;
+    const burnDps = stats.damage * stats.fireRate * f.burnShare;
+    for (const e of s.enemies) {
+      if (e.hp <= 0 || !inCone(slot, tur.aim, f.range, f.halfAngle, e.x, e.y, cfg.enemies[e.type].radius)) continue;
+      e.burn = f.burnSeconds;
+      e.burnDps = Math.max(e.burnDps ?? 0, burnDps);
+      damageEnemy(s, cfg, e, stats.damage);
+    }
+  }
+}
+
+/** Zombies set alight keep taking damage until the fire goes out. */
+function stepBurns(s: GameState, cfg: GameConfig, dt: number): void {
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || !e.burn || e.burn <= 0) continue;
+    e.burn -= dt;
+    damageEnemy(s, cfg, e, (e.burnDps ?? 0) * dt);
+    if (e.burn <= 0) e.burnDps = 0;
   }
 }
 

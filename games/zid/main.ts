@@ -128,7 +128,20 @@ function runPanelAction(action: PanelAction): void {
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
   boost: (kind) => {
-    if (activateBoost(state, cfg, kind).ok) toast(kind === "overdrive" ? "Overdrive! Weapons fire twice as fast" : `Bounty! Kills pay ×${cfg.boost.bounty.drops}`);
+    const res = activateBoost(state, cfg, kind);
+    if (!res.ok) {
+      if (res.reason === "locked") toast("Upgrade the base to unlock");
+      return;
+    }
+    toast(
+      kind === "overdrive"
+        ? "Overdrive! Weapons fire twice as fast"
+        : kind === "bounty"
+          ? `Bounty! Kills pay ×${cfg.boost.bounty.drops}`
+          : kind === "airstrike"
+            ? "Airstrike inbound!"
+            : "Force field up! The base is safe and healing",
+    );
   },
   panel: (action) => runPanelAction(action),
   restart: () => {

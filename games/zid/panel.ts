@@ -34,7 +34,7 @@ import {
 } from "./sim.js";
 
 /** The build menu has two pages: weapons, and traps & walls. */
-export type BuildPage = "weapons" | "traps";
+export type BuildPage = "weapons" | "close" | "traps";
 
 export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "a2" | "close";
 
@@ -141,10 +141,17 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
             buildButton("b0", "gatling", "Gatling"),
             buildButton("a1", "rocket", "Rockets"),
             buildButton("b1", "mortar", "Mortar"),
-            { slot: "a2", label: "Traps & walls ›", enabled: true, action: { kind: "page", page: "traps" } },
+            { slot: "a2", label: "More weapons ›", enabled: true, action: { kind: "page", page: "close" } },
             close,
           ]
-        : [
+        : page === "close"
+          ? [
+              buildButton("a0", "shotgun", "Shotgun"),
+              buildButton("b0", "flamer", "Flamer"),
+              { slot: "a2", label: "Traps & walls ›", enabled: true, action: { kind: "page", page: "traps" } },
+              close,
+            ]
+          : [
             buildButton("a0", "mine", "Mine"),
             buildButton("b0", "tripwire", "Trip wire"),
             buildButton("a1", "barricade", "Barricade"),
@@ -152,7 +159,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
             close,
           ];
     return {
-      title: blocked ? "Can't build here" : page === "weapons" ? "Build a weapon" : "Build a trap or wall",
+      title: blocked ? "Can't build here" : page === "weapons" ? "Build a weapon" : page === "close" ? "Build a close-range weapon" : "Build a trap or wall",
       note: blocked,
       buttons,
       target: { kind: "tile" },
@@ -260,7 +267,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, page: Build
 
 /** " · unlocks Gatling" when that base level unlocks something, else "". */
 function nextUnlock(cfg: GameConfig, baseLevel: number): string {
-  const names: Record<string, string> = { tripwire: "Trip wire", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
+  const names: Record<string, string> = { tripwire: "Trip wire", shotgun: "Shotgun", flamer: "Flamethrower", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
   const kinds = Object.entries(cfg.unlocks)
     .filter(([, lvl]) => lvl === baseLevel)
     .map(([k]) => names[k] ?? k);

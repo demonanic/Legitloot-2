@@ -17,6 +17,9 @@ import {
   barrelSpacing,
   lastBarrel,
   SPLAT_SECONDS,
+  BOOST_KINDS,
+  boostUnlocked,
+  boostUnlockLevel,
   type BoostKind,
   type BuildRejection,
   type GameState,
@@ -136,8 +139,12 @@ export function buttonRects(cfg: GameConfig) {
     panel: { x: 0, y: h - 400, w, h: 400 },
     restart: { x: w / 2 - 150, y: h / 2 + 150, w: 300, h: 84 },
     /** Shown, flashing, only while the charge meter is full during an assault. */
-    boostOverdrive: { x: 40, y: h - 132, w: 310, h: 76 },
-    boostBounty: { x: 370, y: h - 132, w: 310, h: 76 },
+    boosts: {
+      overdrive: { x: 40, y: h - 224, w: 310, h: 76 },
+      bounty: { x: 370, y: h - 224, w: 310, h: 76 },
+      airstrike: { x: 40, y: h - 132, w: 310, h: 76 },
+      shield: { x: 370, y: h - 132, w: 310, h: 76 },
+    } satisfies Record<BoostKind, { x: number; y: number; w: number; h: number }>,
     meter: { x: 40, y: h - 40, w: w - 80, h: 16 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
     ranges: { x: w - 104, y: 82, w: 90, h: 36 },
@@ -150,7 +157,8 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   const selecting = () => getView().selected !== null && !over();
   const boostReady = () => {
     const s = getState();
-    return s.phase === "wave" && s.charge >= 1 && !s.boost;
+    // Hidden while a menu is open, so its buttons can't be hit through it.
+    return s.phase === "wave" && s.charge >= 1 && !s.boost && getView().selected === null;
   };
   const buttonIn = (slot: PanelSlot) => {
     const sel = getView().selected;
@@ -170,8 +178,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   return [
     rectRegion("panel", r.panel, () => true, selecting),
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
-    rectRegion("boost-overdrive", r.boostOverdrive, () => act.boost("overdrive"), boostReady),
-    rectRegion("boost-bounty", r.boostBounty, () => act.boost("bounty"), boostReady),
+    ...BOOST_KINDS.map((k) => rectRegion(`boost-${k}`, r.boosts[k], () => act.boost(k), boostReady)),
     slotRegion("a0"),
     slotRegion("b0"),
     slotRegion("a1"),
@@ -394,6 +401,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     if (sl.kind === "mortar") drawMortar(ctx, cfg, s, sl);
     else if (sl.kind === "gatling") drawGatling(ctx, cfg, s, sl);
     else if (sl.kind === "rocket") drawRocketLauncher(ctx, cfg, s, sl);
+    else if (sl.kind === "shotgun") drawShotgun(ctx, cfg, s, sl);
+    else if (sl.kind === "flamer") drawFlamer(ctx, cfg, s, sl);
     else drawMachineGun(ctx, cfg, s, sl);
     {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
@@ -423,6 +432,16 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    if (e.burn && e.burn > 0) {
+      // On fire: flickering flames licking up from the body.
+      for (let i = 0; i < 3; i++) {
+        const fl = Math.sin(s.time * 20 + e.id + i * 2.1);
+        ctx.fillStyle = i === 1 ? "rgba(255,226,120,0.85)" : "rgba(240,120,40,0.8)";
+        ctx.beginPath();
+        ctx.arc(e.x + (i - 1) * r * 0.55, e.y - r * 0.5 - 3 - fl * 3, r * (0.38 + 0.08 * fl), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     if (e.hp < e.maxHp) bar(ctx, e.x - r, e.y - r - 9, r * 2, 4, e.hp / e.maxHp, C.bad);
   }
 
@@ -535,6 +554,95 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
+  }
+
+  // Airstrike: crosshairs on every drop zone until its bomb lands, and the bomber's shadow crossing the field.
+  for (const b of s.bombs) {
+    const k = 1 - b.delay / b.total;
+    ctx.strokeStyle = C.aim;
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(s.time * 16);
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius * (1 - 0.6 * k), 0, Math.PI * 2);
+    ctx.moveTo(b.x - 22, b.y);
+    ctx.lineTo(b.x + 22, b.y);
+    ctx.moveTo(b.x, b.y - 22);
+    ctx.lineTo(b.x, b.y + 22);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // The bomb itself falls in for the last third of a second.
+    if (b.delay < 0.35) {
+      const f = b.delay / 0.35;
+      ctx.fillStyle = "#24281f";
+      ctx.beginPath();
+      ctx.ellipse(b.x, b.y - f * 160, 5 + (1 - f) * 3, 11 + (1 - f) * 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  if (s.flyover) {
+    const f = s.flyover;
+    const k = f.t / f.total;
+    const x = f.x0 + (f.x1 - f.x0) * k;
+    const y = f.y0 + (f.y1 - f.y0) * k;
+    const ang = Math.atan2(f.y1 - f.y0, f.x1 - f.x0);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(ang);
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
+    ctx.beginPath();
+    // Fuselage, swept wings, tail.
+    ctx.moveTo(70, 0);
+    ctx.lineTo(10, -9);
+    ctx.lineTo(-20, -70);
+    ctx.lineTo(-38, -70);
+    ctx.lineTo(-22, -9);
+    ctx.lineTo(-58, -7);
+    ctx.lineTo(-72, -28);
+    ctx.lineTo(-82, -28);
+    ctx.lineTo(-76, 0);
+    ctx.lineTo(-82, 28);
+    ctx.lineTo(-72, 28);
+    ctx.lineTo(-58, 7);
+    ctx.lineTo(-22, 9);
+    ctx.lineTo(-38, 70);
+    ctx.lineTo(-20, 70);
+    ctx.lineTo(10, 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // Force field: a pulsing dome over the stronghold, with ripples.
+  if (s.boost?.kind === "shield") {
+    const sh = s.stronghold;
+    const R = sh.halfSize * 1.75;
+    const pulse = 0.5 + 0.5 * Math.sin(s.time * 6);
+    const fadeOut = Math.min(1, s.boost.left / 0.6);
+    ctx.globalAlpha = fadeOut;
+    ctx.fillStyle = `rgba(111,195,255,${(0.14 + 0.08 * pulse).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(sh.x, sh.y, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(160,220,255,${(0.7 + 0.3 * pulse).toFixed(3)})`;
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 2; i++) {
+      const t = (s.time * 0.9 + i * 0.5) % 1;
+      ctx.strokeStyle = `rgba(160,220,255,${(0.5 * (1 - t)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(sh.x, sh.y, R * (0.3 + 0.7 * t), 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    // Hex glints running round the rim.
+    ctx.fillStyle = "rgba(220,240,255,0.9)";
+    for (let i = 0; i < 6; i++) {
+      const a = s.time * 1.5 + (i / 6) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(sh.x + Math.cos(a) * R, sh.y + Math.sin(a) * R, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
   }
 
   // Pickups: tap before they fade.
@@ -1360,20 +1468,25 @@ function drawChargeMeter(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: Game
   ctx.textBaseline = "middle";
   if (full && s.phase === "wave") {
     // Glow behind the buttons so they can't be missed.
-    ctx.fillStyle = `rgba(233,194,74,${(0.18 + 0.22 * flash).toFixed(3)})`;
-    roundRect(ctx, r.boostOverdrive.x - 10, r.boostOverdrive.y - 10, r.boostBounty.x + r.boostBounty.w - r.boostOverdrive.x + 20, r.boostOverdrive.h + 20, 16);
+    const b0 = r.boosts.overdrive;
+    const b3 = r.boosts.shield;
+    ctx.fillStyle = "rgba(10,11,10,0.8)";
+    roundRect(ctx, b0.x - 10, b0.y - 10, b3.x + b3.w - b0.x + 20, b3.y + b3.h - b0.y + 20, 16);
     ctx.fill();
-    button(ctx, r.boostOverdrive, "Overdrive", "primary");
-    button(ctx, r.boostBounty, `Bounty ×${cfg.boost.bounty.drops}`, "primary");
-    ctx.strokeStyle = `rgba(233,194,74,${(0.5 + 0.5 * flash).toFixed(3)})`;
-    ctx.lineWidth = 5;
-    for (const b of [r.boostOverdrive, r.boostBounty]) {
-      roundRect(ctx, b.x, b.y, b.w, b.h, 10);
+    ctx.fillStyle = `rgba(233,194,74,${(0.14 + 0.18 * flash).toFixed(3)})`;
+    ctx.fill();
+    for (const k of BOOST_KINDS) {
+      const open = boostUnlocked(s, cfg, k);
+      button(ctx, r.boosts[k], open ? BOOST_LABELS(cfg)[k] : `${BOOST_LABELS(cfg)[k]} · base ${boostUnlockLevel(cfg, k)}`, open ? "primary" : "disabled");
+      if (!open) continue;
+      ctx.strokeStyle = `rgba(233,194,74,${(0.5 + 0.5 * flash).toFixed(3)})`;
+      ctx.lineWidth = 5;
+      roundRect(ctx, r.boosts[k].x, r.boosts[k].y, r.boosts[k].w, r.boosts[k].h, 10);
       ctx.stroke();
     }
   }
   const frac = boost ? boost.left / boost.total : s.charge;
-  const color = boost ? (boost.kind === "overdrive" ? C.flash : C.coin) : full ? `rgba(233,194,74,${(0.6 + 0.4 * flash).toFixed(3)})` : "#7fb0d8";
+  const color = boost ? (boost.kind === "overdrive" ? C.flash : boost.kind === "shield" ? "#6fc3ff" : boost.kind === "airstrike" ? C.aim : C.coin) : full ? `rgba(233,194,74,${(0.6 + 0.4 * flash).toFixed(3)})` : "#7fb0d8";
   bar(ctx, m.x, m.y, m.w, m.h, frac, color);
   ctx.strokeStyle = "rgba(241,238,227,0.35)";
   ctx.lineWidth = 2;
@@ -1382,7 +1495,7 @@ function drawChargeMeter(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: Game
   ctx.lineWidth = 4;
   ctx.strokeStyle = "rgba(10,11,10,0.9)";
   const label = boost
-    ? `${boost.kind === "overdrive" ? "OVERDRIVE" : `BOUNTY ×${cfg.boost.bounty.drops}`} · ${Math.ceil(boost.left)}s`
+    ? `${BOOST_LABELS(cfg)[boost.kind].toUpperCase()} · ${Math.ceil(boost.left)}s`
     : full
       ? s.phase === "wave"
         ? "CHARGED · PICK A BOOST"
@@ -1391,4 +1504,164 @@ function drawChargeMeter(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: Game
   ctx.strokeText(label, m.x + m.w / 2, m.y + m.h / 2 + 1);
   ctx.fillStyle = C.text;
   ctx.fillText(label, m.x + m.w / 2, m.y + m.h / 2 + 1);
+}
+
+const BOOST_LABELS = (cfg: GameConfig): Record<BoostKind, string> => ({
+  overdrive: "Overdrive",
+  bounty: `Bounty ×${cfg.boost.bounty.drops}`,
+  airstrike: "Airstrike",
+  shield: "Force field",
+});
+
+/**
+ * Shotgun: a squat swivel with side-by-side barrels (two, plus one per Speed
+ * level) that fire in turn; the fired barrel kicks hard and throws a wide flash.
+ * Damage adds red shell bands and thicker barrels.
+ */
+function drawShotgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 34, 52, 6, sl.hp / sl.maxHp, C.warn);
+  const r = cfg.shotgun.radius;
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const px = -sin;
+  const py = cos;
+  const kick = fresh(s, t.lastShot, 0.22);
+  const bx = sl.x - cos * kick * 4;
+  const by = sl.y - sin * kick * 4;
+  // Body: a hexagon.
+  ctx.fillStyle = "#8a7f6a";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + t.aim;
+    ctx.lineTo(bx + Math.cos(a) * r, by + Math.sin(a) * r);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  drawRank(ctx, bx, by, r, t);
+  const n = barrelCount(sl);
+  const fired = lastBarrel(sl);
+  const spacing = barrelSpacing(sl);
+  const width = 7 + t.strength * 0.7;
+  let tipX = bx;
+  let tipY = by;
+  for (let i = 0; i < n; i++) {
+    const side = (i - (n - 1) / 2) * spacing;
+    const k = i === fired && t.shots > 0 ? kick : 0;
+    const len = r + 9 - k * 8;
+    const ox = bx + px * side;
+    const oy = by + py * side;
+    ctx.strokeStyle = "#2f332c";
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.moveTo(ox - cos * 4, oy - sin * 4);
+    ctx.lineTo(ox + cos * len, oy + sin * len);
+    ctx.stroke();
+    ctx.strokeStyle = "#9aa095";
+    ctx.lineWidth = width - 4;
+    ctx.beginPath();
+    ctx.moveTo(ox, oy);
+    ctx.lineTo(ox + cos * (len - 2), oy + sin * (len - 2));
+    ctx.stroke();
+    for (let b = 0; b < t.strength; b++) {
+      ctx.strokeStyle = "#c8553d";
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(ox + cos * (4 + b * 5), oy + sin * (4 + b * 5));
+      ctx.lineTo(ox + cos * (6 + b * 5), oy + sin * (6 + b * 5));
+      ctx.stroke();
+    }
+    if (i === fired) {
+      tipX = ox + cos * len;
+      tipY = oy + sin * len;
+    }
+  }
+  // Wide, short flash: a fan the shape of the pellet spread.
+  const flash = fresh(s, t.lastShot, 0.09);
+  if (flash > 0 && t.shots > 0) {
+    ctx.fillStyle = C.flash;
+    ctx.globalAlpha = flash;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.arc(tipX, tipY, 34 + t.strength * 4, t.aim - cfg.shotgun.spread / 2, t.aim + cfg.shotgun.spread / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  drawSmoke(ctx, s, tipX, tipY, t.lastShot, 1.1, 6);
+}
+
+/**
+ * Flamethrower: a tank and a nozzle; while it fires, a cone of rolling flame.
+ * Speed adds fuel tanks, Damage widens the nozzle and makes the flame hotter.
+ */
+function drawFlamer(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  const f = cfg.flamer;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 34, 52, 6, sl.hp / sl.maxHp, C.warn);
+  const r = f.radius;
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const px = -sin;
+  const py = cos;
+  const firing = s.time - t.lastShot < 0.12 && t.shots > 0;
+  // The flame, drawn first so the weapon sits on top of its root.
+  if (firing) {
+    const nozX = sl.x + cos * (r + 8);
+    const nozY = sl.y + sin * (r + 8);
+    for (let i = 0; i < 16; i++) {
+      const k = ((s.time * 2.2 + hash01(sl.id, i)) % 1 + 1) % 1; // 0 at the nozzle, 1 at full reach
+      const spread = (hash01(sl.id, i + 40) - 0.5) * 2 * f.halfAngle * (0.3 + 0.7 * k);
+      const a = t.aim + spread;
+      const d = k * (f.range - r);
+      const size = 5 + k * 17 + t.strength * 1.5;
+      const hot = t.strength >= 2;
+      ctx.fillStyle =
+        k < 0.25
+          ? `rgba(${hot ? "200,230,255" : "255,244,190"},0.9)`
+          : k < 0.6
+            ? `rgba(255,${hot ? 190 : 170},60,${(0.75 - k * 0.3).toFixed(2)})`
+            : `rgba(230,90,30,${(0.6 * (1 - k) + 0.1).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(nozX + Math.cos(a) * d, nozY + Math.sin(a) * d, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Base and fuel tanks (one, plus one per Speed level, behind the nozzle).
+  ctx.fillStyle = "#7a5a3c";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(sl.x, sl.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  drawRank(ctx, sl.x, sl.y, r, t);
+  const tanks = 1 + t.speed;
+  for (let i = 0; i < tanks; i++) {
+    const side = (i - (tanks - 1) / 2) * 10;
+    ctx.fillStyle = "#c8553d";
+    ctx.strokeStyle = "#5a231a";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sl.x - cos * 8 + px * side, sl.y - sin * 8 + py * side, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Nozzle, shaking a little while it fires.
+  const shake = firing ? Math.sin(s.time * 60) * 1.2 : 0;
+  ctx.strokeStyle = "#2f332c";
+  ctx.lineWidth = 8 + t.strength * 1.5;
+  ctx.beginPath();
+  ctx.moveTo(sl.x + px * shake, sl.y + py * shake);
+  ctx.lineTo(sl.x + cos * (r + 8) + px * shake, sl.y + sin * (r + 8) + py * shake);
+  ctx.stroke();
+  // Pilot light.
+  ctx.fillStyle = firing ? C.flash : "#6fb0ff";
+  ctx.beginPath();
+  ctx.arc(sl.x + cos * (r + 9), sl.y + sin * (r + 9), firing ? 5 : 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  if (!firing) drawSmoke(ctx, s, sl.x + cos * (r + 8), sl.y + sin * (r + 8), t.lastShot, 1.2, 5);
 }

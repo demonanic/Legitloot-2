@@ -125,7 +125,7 @@ test("construction: checkBuild is a pure preview that matches buildTurret", () =
 });
 
 test("construction: many turrets can be placed, limited only by space and supplies (caps lifted)", () => {
-  const cfg = { ...baseConfig, stronghold: { ...baseConfig.stronghold, levels: [{ cost: 0, machineGuns: 999, mortars: 999, gatlings: 999, rockets: 999, traps: 999, maxHp: 400 }] } };
+  const cfg = { ...baseConfig, stronghold: { ...baseConfig.stronghold, levels: [{ cost: 0, machineGuns: 999, mortars: 999, gatlings: 999, rockets: 999, shotguns: 99, flamers: 99, traps: 999, maxHp: 400 }] } };
   const s = createState(cfg, 1);
   s.currency = 1e6;
   let built = 0;

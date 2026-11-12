@@ -56,7 +56,7 @@ function buildNearest(s: GameState, cfg: GameConfig, kind: StructureKind = "mach
   return !!t && buildStructure(s, cfg, kind, t.col, t.row).ok;
 }
 
-const WEAPON_PREFERENCE: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar"];
+const WEAPON_PREFERENCE: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer"];
 
 /**
  * Build the unlocked weapon kind with the most room left under its cap
@@ -187,5 +187,10 @@ sensiblePlayer.during = (s, cfg) => {
   for (const p of [...s.pickups]) {
     if (p.life <= cfg.pickups.lifeSeconds - 2) collectPickup(s, cfg, p.id);
   }
-  if (s.charge >= 1 && !s.boost && s.enemies.length >= 12) activateBoost(s, cfg, "overdrive");
+  if (s.charge >= 1 && !s.boost) {
+    // Force field when the base is in trouble, otherwise an airstrike on a big crowd, otherwise Overdrive.
+    if (s.stronghold.hp < s.stronghold.maxHp * 0.4 && activateBoost(s, cfg, "shield").ok) return;
+    if (s.enemies.length >= 20 && activateBoost(s, cfg, "airstrike").ok) return;
+    if (s.enemies.length >= 12) activateBoost(s, cfg, "overdrive");
+  }
 };

@@ -31,6 +31,8 @@ export interface BaseLevel {
   mortars: number;
   gatlings: number;
   rockets: number;
+  shotguns: number;
+  flamers: number;
   /** Mines and trip wires together. */
   traps: number;
   maxHp: number;
@@ -135,6 +137,40 @@ export interface GameConfig {
     /** Upgrade prices are the turret prices times this. */
     upgradeCostMultiplier: number;
   };
+  /** Shotgun: short range; each shot is a fan of pellets that fade at the end of their reach. */
+  shotgun: {
+    cost: number;
+    range: number;
+    fireRate: number;
+    pellets: number;
+    /** Damage per pellet at level 0. */
+    damage: number;
+    /** Full width of the fan, radians. */
+    spread: number;
+    projectileSpeed: number;
+    radius: number;
+    maxHp: number;
+    upgradeCostMultiplier: number;
+  };
+  /**
+   * Flamethrower: very short range; every tick burns every zombie inside its
+   * cone, and sets them alight so they keep taking damage for a while.
+   */
+  flamer: {
+    cost: number;
+    range: number;
+    /** Half-width of the cone, radians. */
+    halfAngle: number;
+    /** Damage ticks per second at level 0, and damage per tick. */
+    fireRate: number;
+    damage: number;
+    burnSeconds: number;
+    /** Burn damage per second, as a share of the flame's damage per second. */
+    burnShare: number;
+    radius: number;
+    maxHp: number;
+    upgradeCostMultiplier: number;
+  };
   /** Gatling gun: fire rate spins up from `minRate` to `maxRate` while it has targets. */
   gatling: {
     cost: number;
@@ -177,7 +213,7 @@ export interface GameConfig {
   /** Trap damage grows with the base: +this share per base level above the first. */
   trapDamagePerBaseLevel: number;
   /** The base level (1 = the starting base) from which each kind can be built. */
-  unlocks: Record<"machine-gun" | "gatling" | "rocket" | "mortar" | "barricade" | "mine" | "tripwire", number>;
+  unlocks: Record<"machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "barricade" | "mine" | "tripwire", number>;
   /** Barricades block movement; reinforcing raises their maximum health. */
   barricade: { cost: number; maxHp: number; reinforce: UpgradePath };
   /**
@@ -236,6 +272,14 @@ export interface GameConfig {
     killsToFill: number;
     overdrive: { seconds: number; fireRate: number };
     bounty: { seconds: number; drops: number };
+    /**
+     * Airstrike: crosshairs mark a line of drop zones through the thickest
+     * crowd, then bombs land one after another. Never on the stronghold.
+     * Damage is `damageWalkers` times a walker's health on the current wave.
+     */
+    airstrike: { bombs: number; spacing: number; radius: number; warnSeconds: number; interval: number; damageWalkers: number; unlockBase: number };
+    /** Force field: the stronghold takes no damage and regains health while it runs. */
+    shield: { seconds: number; regenPerSecond: number; unlockBase: number };
   };
   /** Provisional design target used by scripts/balance.mjs, not by the game. */
   balance: { typicalDefeatWaveMin: number; typicalDefeatWaveMax: number };
@@ -250,11 +294,11 @@ export const baseConfig: GameConfig = {
     halfSize: 41,
     maxHp: 400,
     levels: [
-      { cost: 0, machineGuns: 3, mortars: 1, gatlings: 1, rockets: 1, traps: 6, maxHp: 400 },
-      { cost: 100, machineGuns: 5, mortars: 2, gatlings: 1, rockets: 1, traps: 10, maxHp: 480 },
-      { cost: 180, machineGuns: 7, mortars: 3, gatlings: 1, rockets: 1, traps: 14, maxHp: 560 },
-      { cost: 280, machineGuns: 9, mortars: 4, gatlings: 2, rockets: 1, traps: 18, maxHp: 640 },
-      { cost: 400, machineGuns: 12, mortars: 5, gatlings: 3, rockets: 2, traps: 24, maxHp: 720 },
+      { cost: 0, machineGuns: 3, mortars: 1, gatlings: 1, rockets: 1, shotguns: 2, flamers: 1, traps: 6, maxHp: 400 },
+      { cost: 100, machineGuns: 5, mortars: 2, gatlings: 1, rockets: 1, shotguns: 2, flamers: 1, traps: 10, maxHp: 480 },
+      { cost: 180, machineGuns: 7, mortars: 3, gatlings: 1, rockets: 1, shotguns: 3, flamers: 1, traps: 14, maxHp: 560 },
+      { cost: 280, machineGuns: 9, mortars: 4, gatlings: 2, rockets: 1, shotguns: 4, flamers: 2, traps: 18, maxHp: 640 },
+      { cost: 400, machineGuns: 12, mortars: 5, gatlings: 3, rockets: 2, shotguns: 5, flamers: 3, traps: 24, maxHp: 720 },
     ],
   },
   construction: {
@@ -285,6 +329,8 @@ export const baseConfig: GameConfig = {
     maxHp: 100,
     upgradeCostMultiplier: 1.5,
   },
+  shotgun: { cost: 60, range: 135, fireRate: 1.2, pellets: 6, damage: 6, spread: 0.42, projectileSpeed: 600, radius: 19, maxHp: 130, upgradeCostMultiplier: 1.2 },
+  flamer: { cost: 110, range: 115, halfAngle: 0.42, fireRate: 10, damage: 1.3, burnSeconds: 2.5, burnShare: 0.25, radius: 19, maxHp: 130, upgradeCostMultiplier: 1.4 },
   gatling: {
     cost: 90,
     range: 151,
@@ -315,7 +361,7 @@ export const baseConfig: GameConfig = {
   mine: { cost: 15, triggerRadius: 32, blastRadius: 60, damage: 120 },
   tripwire: { cost: 25, length: 192, blasts: 5, blastRadius: 32, damage: 70 },
   trapDamagePerBaseLevel: 0.6,
-  unlocks: { "machine-gun": 1, mortar: 1, barricade: 1, mine: 1, tripwire: 2, gatling: 3, rocket: 4 },
+  unlocks: { "machine-gun": 1, mortar: 1, barricade: 1, mine: 1, tripwire: 2, shotgun: 2, gatling: 3, flamer: 3, rocket: 4 },
   barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
   repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25, assaultMultiplier: 1.5 },
   recycle: { intactShare: 0.5, rubbleShare: 0.25 },
@@ -359,7 +405,10 @@ export const baseConfig: GameConfig = {
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
   pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.55, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
-  boost: { killsToFill: 90, overdrive: { seconds: 8, fireRate: 2 }, bounty: { seconds: 12, drops: 3 } },
+  boost: { killsToFill: 90, overdrive: { seconds: 8, fireRate: 2 }, bounty: { seconds: 12, drops: 3 },
+    airstrike: { bombs: 9, spacing: 95, radius: 100, warnSeconds: 1.2, interval: 0.16, damageWalkers: 3, unlockBase: 2 },
+    shield: { seconds: 6, regenPerSecond: 0.04, unlockBase: 3 },
+  },
   balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 15 },
 };
 
@@ -373,7 +422,7 @@ export function stressConfig(base: GameConfig = baseConfig): GameConfig {
   return {
     ...base,
     economy: { startCurrency: 0 },
-    stronghold: { ...base.stronghold, maxHp: 1e9, levels: [{ cost: 0, machineGuns: 99, mortars: 99, gatlings: 99, rockets: 99, traps: 99, maxHp: 1e9 }] },
+    stronghold: { ...base.stronghold, maxHp: 1e9, levels: [{ cost: 0, machineGuns: 99, mortars: 99, gatlings: 99, rockets: 99, shotguns: 99, flamers: 99, traps: 99, maxHp: 1e9 }] },
     // Long range and slow walkers keep projectiles in flight for a steady load,
     // instead of collapsing to point-blank shots once walkers reach the turrets.
     turret: { ...base.turret, cost: 0, fireRate: 100, damage: 0, range: 1500 },

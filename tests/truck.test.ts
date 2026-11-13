@@ -460,13 +460,14 @@ test("salvage: a share of every unloaded haul is banked; an empty or destroyed r
   assert.equal(e.salvageBanked, 0);
 });
 
-test("salvage: before the first wave it turns into starting Supplies, up to the cap, once", () => {
+test("salvage: converts in chosen amounts, up to the cap for the run", () => {
   const cfg = SUCCESS;
   const s = createState(cfg, 1);
   const start = s.currency;
   assert.equal(salvageUsable(s, cfg, 40), 40);
-  assert.equal(useSalvage(s, cfg, 40), 40);
-  assert.equal(s.currency, start + 40 * cfg.salvage.suppliesPerSalvage);
+  assert.equal(useSalvage(s, cfg, 40, 25), 25, "only the amount asked for");
+  assert.equal(s.currency, start + 25 * cfg.salvage.suppliesPerSalvage);
+  assert.equal(useSalvage(s, cfg, 15, 50), 15, "never more than the stockpile holds");
   // A big stockpile is capped per run.
   const left = cfg.salvage.maxStartBonus / cfg.salvage.suppliesPerSalvage - 40;
   assert.equal(useSalvage(s, cfg, 10_000), left);
@@ -474,12 +475,32 @@ test("salvage: before the first wave it turns into starting Supplies, up to the 
   assert.equal(s.currency, start + cfg.salvage.maxStartBonus);
 });
 
-test("salvage: it can't be cashed in once the run is under way", () => {
+test("salvage: can be converted at any point in a run, between waves or mid-assault, but not after defeat", () => {
   const cfg = SUCCESS;
   const s = createState(cfg, 1);
   assault(s, cfg);
-  assert.equal(useSalvage(s, cfg, 100), 0);
+  assert.equal(useSalvage(s, cfg, 100, 25), 25, "mid-assault");
   clearWave(s, cfg);
   assert.equal(s.wave, 2);
-  assert.equal(useSalvage(s, cfg, 100), 0);
+  assert.equal(useSalvage(s, cfg, 100, 25), 25, "in a later wave's preparation");
+  s.phase = "lost";
+  assert.equal(useSalvage(s, cfg, 100, 25), 0);
+});
+
+test("menu: the base menu's convert page offers set amounts and everything allowed, in both phases", () => {
+  const cfg = SUCCESS;
+  const s = createState(cfg, 1);
+  const base = panelModel(s, cfg, { col: 4, row: 9 }, "weapons", 60);
+  const link = base.buttons.find((b) => b.slot === "a2")!;
+  assert.deepEqual(link.action, { kind: "page", page: "salvage" });
+  assert.match(link.label, /Convert Salvage \(60\)/);
+  const page = panelModel(s, cfg, { col: 4, row: 9 }, "salvage", 60);
+  const amounts = page.buttons.filter((b) => b.action.kind === "convert-salvage");
+  assert.deepEqual(amounts.map((b) => [b.action.kind === "convert-salvage" ? b.action.amount : 0, b.enabled]), [[25, true], [50, true], [100, false], [60, true]]);
+  assault(s, cfg);
+  const hot = panelModel(s, cfg, { col: 4, row: 9 }, "weapons", 60);
+  assert.ok(hot.buttons.some((b) => b.action.kind === "page" && b.action.page === "salvage" && b.enabled), "reachable mid-assault");
+  assert.equal(panelModel(s, cfg, { col: 4, row: 9 }, "salvage", 60).buttons.filter((b) => b.action.kind === "convert-salvage").length, 4);
+  const empty = panelModel(createState(cfg, 1), cfg, { col: 4, row: 9 }, "weapons", 0);
+  assert.equal(empty.buttons.find((b) => b.slot === "a2")!.enabled, false);
 });

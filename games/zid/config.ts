@@ -136,7 +136,7 @@ export interface GameConfig {
    * starting Supplies at the beginning of a later run, up to a cap per run.
    * Run Supplies themselves are always lost on defeat.
    */
-  salvage: { shareOfHaul: number; suppliesPerSalvage: number; maxStartBonus: number };
+  salvage: { shareOfHaul: number; suppliesPerSalvage: number; maxStartBonus: number; /** Amounts offered on the convert page. */ steps: number[] };
   /**
    * Survivors: fighters unlocked for good with permanent Salvage. They act on
    * their own: hold a post near the stronghold, shoot what comes in range,
@@ -406,7 +406,7 @@ export const baseConfig: GameConfig = {
     ],
   },
   economy: { startCurrency: 100 },
-  salvage: { shareOfHaul: 0.2, suppliesPerSalvage: 1, maxStartBonus: 150 },
+  salvage: { shareOfHaul: 0.2, suppliesPerSalvage: 1, maxStartBonus: 150, steps: [25, 50, 100] },
   survivors: {
     leash: 190,
     aggroRadius: 55,

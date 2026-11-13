@@ -437,23 +437,27 @@ export function truckExposed(s: GameState): boolean {
   return st === "departing" || st === "arriving" || st === "unloading";
 }
 
-/** How much stockpiled Salvage this run may still turn into starting Supplies (only before the first wave). */
+/**
+ * How much stockpiled Salvage this run may still turn into Supplies. Allowed
+ * at any point in a run, between waves or mid-assault, up to the per-run cap.
+ */
 export function salvageUsable(s: GameState, cfg: GameConfig, stockpile: number): number {
-  if (s.wave !== 1 || (s.phase !== "prep" && s.phase !== "warning") || s.wavesCleared > 0) return 0;
+  if (s.phase === "lost") return 0;
   const room = cfg.salvage.maxStartBonus / cfg.salvage.suppliesPerSalvage - s.salvageUsed;
   return Math.max(0, Math.min(Math.floor(stockpile), Math.floor(room)));
 }
 
 /**
- * Turn stockpiled Salvage into starting Supplies. Returns how much Salvage
- * was spent (0 if none could be); the caller takes it off the stockpile.
+ * Turn stockpiled Salvage into Supplies: `amount` of it, or as much as is
+ * allowed when no amount is given. Returns how much Salvage was spent (0 if
+ * none could be); the caller takes it off the stockpile.
  */
-export function useSalvage(s: GameState, cfg: GameConfig, stockpile: number): number {
-  const amount = salvageUsable(s, cfg, stockpile);
-  if (amount <= 0) return 0;
-  s.salvageUsed += amount;
-  s.currency += amount * cfg.salvage.suppliesPerSalvage;
-  return amount;
+export function useSalvage(s: GameState, cfg: GameConfig, stockpile: number, amount = Infinity): number {
+  const spend = Math.min(salvageUsable(s, cfg, stockpile), Math.max(0, Math.floor(amount)));
+  if (spend <= 0) return 0;
+  s.salvageUsed += spend;
+  s.currency += spend * cfg.salvage.suppliesPerSalvage;
+  return spend;
 }
 
 export type TruckRejection = "run-over" | "assault-active" | "truck-busy" | "insufficient-funds";

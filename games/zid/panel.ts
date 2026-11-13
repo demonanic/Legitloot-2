@@ -27,6 +27,7 @@ import {
   countKind,
   checkBaseUpgrade,
   checkSendTruck,
+  salvageUsable,
   nextBaseUpgradeCost,
   type UpgradePathId,
   type StructureKind,
@@ -35,7 +36,7 @@ import {
 } from "./sim.js";
 
 /** The build menu has two pages: weapons, and traps & walls. */
-export type BuildPage = "weapons" | "close" | "traps" | "survivors";
+export type BuildPage = "weapons" | "close" | "traps" | "survivors" | "salvage";
 
 export type PanelSlot = "a0" | "b0" | "a1" | "b1" | "a2" | "close";
 
@@ -46,6 +47,7 @@ export type PanelAction =
   | { kind: "upgrade-base" }
   | { kind: "send-truck" }
   | { kind: "unlock-survivor"; id: string }
+  | { kind: "convert-salvage"; amount: number }
   | { kind: "reinforce" }
   | { kind: "repair" }
   | { kind: "recycle" }
@@ -89,7 +91,33 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
   const st = structureAt(s, sel.col, sel.row);
   const onBase = !st && overlapsStronghold(cfg, sel.col, sel.row);
   // The survivors page belongs to the base menu; anywhere else it means the first build page.
-  const page: BuildPage = pageIn === "survivors" && !onBase ? "weapons" : pageIn;
+  const page: BuildPage = (pageIn === "survivors" || pageIn === "salvage") && !onBase ? "weapons" : pageIn;
+
+  if (onBase && page === "salvage") {
+    // Convert permanent Salvage into Supplies, a chosen amount at a time. Open between waves and mid-assault.
+    const usable = salvageUsable(s, cfg, salvage);
+    const rate = cfg.salvage.suppliesPerSalvage;
+    const cap = cfg.salvage.maxStartBonus / rate;
+    const slots: PanelSlot[] = ["a0", "b0", "a1"];
+    const steps: PanelButton[] = cfg.salvage.steps.slice(0, slots.length).map((n, i) => ({
+      slot: slots[i]!,
+      label: `${n} Salvage → +${n * rate}`,
+      enabled: usable >= n,
+      action: { kind: "convert-salvage", amount: n },
+    }));
+    return {
+      title: `Salvage ${salvage} · Supplies ${s.currency}`,
+      note: null,
+      info: s.salvageUsed >= cap ? `This run's limit of ${cap} is used up` : `Converted this run: ${s.salvageUsed} of ${cap}`,
+      buttons: [
+        ...steps,
+        { slot: "b1", label: usable > 0 ? `All you can (${usable})` : "Nothing to convert", enabled: usable > 0, action: { kind: "convert-salvage", amount: usable } },
+        { slot: "a2", label: "‹ Base", enabled: true, action: { kind: "page", page: "weapons" } },
+        close,
+      ],
+      target: { kind: "stronghold" },
+    };
+  }
 
   if (onBase && page === "survivors" && s.phase !== "wave") {
     const slots: PanelSlot[] = ["a0", "b0", "a1", "b1"];
@@ -122,7 +150,11 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
         title: `Base level ${sh.level + 1} · ${Math.ceil(sh.hp)} / ${sh.maxHp} health`,
         note: null,
         info: EMERGENCY_INFO(cfg),
-        buttons: [repairButton(s, cfg, "a0", null, "Repair"), close],
+        buttons: [
+          repairButton(s, cfg, "a0", null, "Repair"),
+          { slot: "b0", label: `Convert Salvage (${salvage}) ›`, enabled: salvageUsable(s, cfg, salvage) > 0, action: { kind: "page", page: "salvage" } },
+          close,
+        ],
         target: { kind: "stronghold" },
       };
     }
@@ -161,6 +193,12 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
           label: `Survivors ${s.survivors.length}/${cfg.survivors.roster.length} ›`,
           enabled: true,
           action: { kind: "page", page: "survivors" },
+        },
+        {
+          slot: "a2",
+          label: `Convert Salvage (${salvage}) ›`,
+          enabled: salvageUsable(s, cfg, salvage) > 0,
+          action: { kind: "page", page: "salvage" },
         },
         close,
       ],

@@ -123,6 +123,15 @@ function runPanelAction(action: PanelAction): void {
     case "page":
       view.buildPage = action.page;
       return;
+    case "convert-salvage": {
+      const spent = useSalvage(state, cfg, view.salvage, action.amount);
+      if (spent > 0) {
+        view.salvage -= spent;
+        saveSalvage(view.salvage);
+        toast(`+${spent * cfg.salvage.suppliesPerSalvage} Supplies from your Salvage`);
+      }
+      return;
+    }
     case "unlock-survivor": {
       const def = survivorDef(cfg, action.id);
       if (!def || unlockedSurvivors.includes(def.id) || view.salvage < def.cost) return;
@@ -181,12 +190,11 @@ function runPanelAction(action: PanelAction): void {
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
   useSalvage: () => {
-    const spent = useSalvage(state, cfg, view.salvage);
-    if (spent > 0) {
-      view.salvage -= spent;
-      saveSalvage(view.salvage);
-      toast(`+${spent * cfg.salvage.suppliesPerSalvage} Supplies from your Salvage`);
-    }
+    // Open the base menu on its convert page, where the amount is chosen.
+    const t = cfg.construction.tileSize;
+    const o = cfg.construction.origin;
+    view.selected = { col: Math.floor((cfg.stronghold.x - 1 - o.x) / t), row: Math.floor((cfg.stronghold.y - 1 - o.y) / t) };
+    view.buildPage = "salvage";
   },
   boost: (kind) => {
     const res = activateBoost(state, cfg, kind);
@@ -277,7 +285,7 @@ const loop = createLoop({
       saveSalvage(view.salvage);
     }
     // The survivors page is only reached from the base menu; start from the main page next time.
-    if (view.selected === null && view.buildPage === "survivors") view.buildPage = "weapons";
+    if (view.selected === null && (view.buildPage === "survivors" || view.buildPage === "salvage")) view.buildPage = "weapons";
     if (state.phase === "lost") view.selected = null;
     else if (state.phase === "wave" && view.selected) {
       // Only things that can be repaired stay selected once the assault starts.

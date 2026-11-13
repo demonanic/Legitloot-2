@@ -53,7 +53,7 @@ The smallest playable proof, fully offline:
 - **The truck goes round things.** It plans a route across the grid around rocks, the stronghold and everything you built (rubble and traps included), then straightens it into long runs and wide corners. Collisions use each thing's real footprint. If you wall it in completely it pushes through as few of your structures as it can, never a rock or the stronghold.
 - **Smoother driving:** it pulls away and brakes gradually, slows for corners, lines itself up in its bay while waiting, and rolls the last few metres straight into the bay. Zombies it reaches are shouldered aside rather than driven through.
 - **Parking bay:** the two tiles below the door are reserved for the truck and can't be built on.
-- **What survives defeat:** 20% of every haul unloaded is banked as permanent **Salvage**, saved in the browser the moment it is unloaded. Run Supplies are still lost on defeat. Before the first wave of a later run, one tap turns stockpiled Salvage into extra starting Supplies (1 for 1, up to 150 per run).
+- **What survives defeat:** 20% of every haul unloaded is banked as permanent **Salvage**, saved in the browser the moment it is unloaded. Run Supplies are still lost on defeat. Salvage converts into Supplies 1 for 1, up to 150 per run, at any point in a run: between waves (a "Convert Salvage" button above Start, or the base menu) and mid-assault (tap the base). You choose 25, 50, 100 or everything allowed.
 - The balance target band is now waves 10 to 18.
 
 ### Salvage runs

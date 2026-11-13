@@ -117,7 +117,7 @@ export const BUILD_MESSAGES: Record<BuildRejection, string> = {
 
 export interface UiActions {
   startNow(): void;
-  /** Turn stockpiled Salvage into starting Supplies (first wave only). */
+  /** Open the convert-Salvage page. */
   useSalvage(): void;
   /** Spend the full charge meter on a boost. */
   boost(kind: BoostKind): void;
@@ -186,7 +186,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
   return [
     rectRegion("panel", r.panel, () => true, selecting),
     rectRegion("start-now", r.startNow, () => act.startNow(), () => getState().phase === "prep" && !selecting()),
-    rectRegion("use-salvage", r.useSalvage, () => act.useSalvage(), () => !selecting() && salvageUsable(getState(), cfg, getView().salvage) > 0),
+    rectRegion("use-salvage", r.useSalvage, () => act.useSalvage(), () => getState().phase === "prep" && !selecting() && salvageUsable(getState(), cfg, getView().salvage) > 0),
     ...BOOST_KINDS.map((k) => rectRegion(`boost-${k}`, r.boosts[k], () => act.boost(k), boostReady)),
     slotRegion("a0"),
     slotRegion("b0"),
@@ -801,7 +801,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText("Tap a tile to build, or anything you built to manage it", W / 2, r.startNow.y - 40);
     button(ctx, r.startNow, "Start wave now");
     const usable = salvageUsable(s, cfg, view.salvage);
-    if (usable > 0) button(ctx, r.useSalvage, `Use ${usable} Salvage · +${usable * cfg.salvage.suppliesPerSalvage} Supplies`);
+    if (usable > 0) button(ctx, r.useSalvage, `Convert Salvage (${view.salvage}) ›`);
   }
   if (!sel && s.phase !== "lost") drawChargeMeter(ctx, cfg, s, r);
 

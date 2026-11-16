@@ -60,6 +60,23 @@ export interface SurvivorDef {
   perk: SurvivorPerk;
   perkValue: number;
   perkText: string;
+  /** The starting weapon's name, and the better ones picked up at later levels (highest reached wins). */
+  weapon: string;
+  tiers: SurvivorWeapon[];
+}
+
+export interface SurvivorWeapon {
+  /** Level at which the survivor switches to this weapon. */
+  level: number;
+  weapon: string;
+  range: number;
+  fireRate: number;
+  damage: number;
+  pellets: number;
+  /** Fires homing rockets with this much splash damage instead of bullets. */
+  rocketSplash?: number;
+  /** Multiplies the survivor's perk (the mechanic repairs faster). */
+  perkScale?: number;
 }
 
 export interface UpgradePath {
@@ -150,6 +167,18 @@ export interface GameConfig {
     leash: number;
     /** Zombies this close to a survivor go for them. */
     aggroRadius: number;
+    /** Which zombies chase survivors. The rest stay on course for the stronghold. */
+    chasers: EnemyType[];
+    /**
+     * Levels, earned within a run from the survivor's own kills: kills needed
+     * to reach level 2, 3, 4, 5. Each level adds health and damage; some
+     * levels also swap in a better weapon (see `tiers` on each survivor).
+     */
+    levelKills: number[];
+    hpPerLevel: number;
+    damagePerLevel: number;
+    /** The mechanic also earns progress by repairing: this much health repaired counts as one kill. */
+    repairPerKill: number;
     /** Below this share of health they fall back to the door. */
     retreatBelow: number;
     /** Health regained per second while sheltering at the door. */
@@ -410,16 +439,45 @@ export const baseConfig: GameConfig = {
   salvage: { shareOfHaul: 0.2, suppliesPerSalvage: 1, maxStartBonus: 150, steps: [25, 50, 100] },
   survivors: {
     leash: 190,
-    aggroRadius: 55,
+    aggroRadius: 130,
+    chasers: ["walker", "runner"],
+    levelKills: [20, 60, 130, 240],
+    repairPerKill: 8,
+    hpPerLevel: 0.15,
+    damagePerLevel: 0.12,
     retreatBelow: 0.35,
     regenPerSecond: 6,
     damagePerBaseLevel: 0.35,
     projectileSpeed: 640,
     lastStand: { healShare: 0.25, shieldSeconds: 5 },
     roster: [
-      { id: "scout", name: "Ray", role: "Scout", cost: 60, maxHp: 90, speed: 92, range: 150, fireRate: 4, damage: 3, pellets: 1, perk: "collector", perkValue: 0, perkText: "Grabs pickups for you" },
-      { id: "marksman", name: "Dutch", role: "Marksman", cost: 120, maxHp: 110, speed: 62, range: 240, fireRate: 0.9, damage: 22, pellets: 1, perk: "marksman", perkValue: 1.5, perkText: "Hunts brutes, +50% damage to them" },
-      { id: "mechanic", name: "Patch", role: "Mechanic", cost: 180, maxHp: 150, speed: 66, range: 120, fireRate: 1.1, damage: 5, pellets: 5, perk: "mechanic", perkValue: 1.2, perkText: "Shotgun; repairs the base as she fights" },
+      {
+        id: "scout", name: "Ray", role: "Scout", cost: 60, maxHp: 135, speed: 92,
+        weapon: "Pistol", range: 150, fireRate: 4, damage: 3, pellets: 1,
+        perk: "collector", perkValue: 0, perkText: "Grabs pickups for you",
+        tiers: [
+          { level: 3, weapon: "SMG", range: 160, fireRate: 7.5, damage: 3, pellets: 1 },
+          { level: 5, weapon: "Assault rifle", range: 190, fireRate: 8, damage: 5, pellets: 1 },
+        ],
+      },
+      {
+        id: "marksman", name: "Dutch", role: "Marksman", cost: 120, maxHp: 165, speed: 62,
+        weapon: "Rifle", range: 240, fireRate: 0.9, damage: 22, pellets: 1,
+        perk: "marksman", perkValue: 1.5, perkText: "Hunts brutes, +50% damage to them",
+        tiers: [
+          { level: 3, weapon: "Auto rifle", range: 250, fireRate: 2.2, damage: 20, pellets: 1 },
+          { level: 5, weapon: "RPG", range: 260, fireRate: 0.7, damage: 60, pellets: 1, rocketSplash: 30 },
+        ],
+      },
+      {
+        id: "mechanic", name: "Patch", role: "Mechanic", cost: 180, maxHp: 225, speed: 66,
+        weapon: "Shotgun", range: 120, fireRate: 1.1, damage: 5, pellets: 5,
+        perk: "mechanic", perkValue: 1.2, perkText: "Shotgun; repairs the base as she fights",
+        tiers: [
+          { level: 3, weapon: "Auto shotgun", range: 120, fireRate: 2.2, damage: 5, pellets: 5 },
+          { level: 5, weapon: "Drum shotgun", range: 130, fireRate: 2.4, damage: 6, pellets: 8, perkScale: 2 },
+        ],
+      },
     ],
   },
   turret: { cost: 50, range: 174, fireRate: 5, damage: 4, projectileSpeed: 574, radius: 18, maxHp: 120 },

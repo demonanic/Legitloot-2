@@ -5,7 +5,7 @@
  * the state after N steps is identical. All state is plain JSON.
  */
 
-import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig, type SurvivorDef } from "./config.js";
+import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig, type SurvivorDef, type SurvivorWeapon } from "./config.js";
 import { buildableTiles, gridSize, overlapsStronghold, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
@@ -93,6 +93,8 @@ export interface Rocket {
   splash: number;
   life: number;
   trail: [number, number][];
+  /** The survivor who fired it, for kill credit. */
+  by?: string;
 }
 
 /** A short on-screen notice, e.g. an unlock. For drawing only. */
@@ -160,7 +162,10 @@ export interface Survivor {
   targetId: number | null;
   /** True while their feet are moving, for the walk animation. */
   moving: boolean;
+  /** Progress toward the next level: kills, plus (for the mechanic) repair work counted as fractions of a kill. */
   kills: number;
+  /** 1 to 5, earned this run from their own kills. */
+  level: number;
 }
 
 export function survivorDef(cfg: GameConfig, id: string): SurvivorDef | null {
@@ -181,13 +186,47 @@ export function addSurvivor(s: GameState, cfg: GameConfig, id: string): boolean 
   if (!def || s.survivors.some((v) => v.id === id)) return false;
   const index = cfg.survivors.roster.indexOf(def);
   const p = survivorPost(s, cfg, index);
-  s.survivors.push({ id, x: p.x, y: p.y, hp: def.maxHp, maxHp: def.maxHp, downed: false, retreating: false, cooldown: 0, aim: Math.atan2(p.y - s.stronghold.y, p.x - s.stronghold.x), lastShot: -1e9, targetId: null, moving: false, kills: 0 });
+  s.survivors.push({ id, x: p.x, y: p.y, hp: def.maxHp, maxHp: def.maxHp, downed: false, retreating: false, cooldown: 0, aim: Math.atan2(p.y - s.stronghold.y, p.x - s.stronghold.x), lastShot: -1e9, targetId: null, moving: false, kills: 0, level: 1 });
   return true;
 }
 
-/** Bullet damage after the base-level bonus. */
-export function survivorDamage(s: GameState, cfg: GameConfig, def: SurvivorDef): number {
-  return def.damage * (1 + cfg.survivors.damagePerBaseLevel * s.stronghold.level);
+/** The weapon a survivor carries at a level: the best tier reached, or the starting one. */
+export function survivorWeapon(def: SurvivorDef, level: number): SurvivorWeapon & { tier: number } {
+  let best: SurvivorWeapon = { level: 1, weapon: def.weapon, range: def.range, fireRate: def.fireRate, damage: def.damage, pellets: def.pellets };
+  let tier = 0;
+  def.tiers.forEach((t, i) => {
+    if (level >= t.level && t.level >= best.level) {
+      best = t;
+      tier = i + 1;
+    }
+  });
+  return { ...best, tier };
+}
+
+export const SURVIVOR_MAX_LEVEL = 5;
+
+/** Bullet damage after the base-level bonus and, when the survivor is given, their own level and weapon. */
+export function survivorDamage(s: GameState, cfg: GameConfig, def: SurvivorDef, v?: Survivor): number {
+  const level = v?.level ?? 1;
+  return survivorWeapon(def, level).damage * (1 + cfg.survivors.damagePerBaseLevel * s.stronghold.level) * (1 + cfg.survivors.damagePerLevel * (level - 1));
+}
+
+/** A kill by a survivor counts toward their next level; levelling adds health and may bring a new weapon. */
+function creditKill(s: GameState, cfg: GameConfig, id: string, amount = 1): void {
+  const v = s.survivors.find((x) => x.id === id);
+  const def = v && survivorDef(cfg, id);
+  if (!v || !def) return;
+  v.kills += amount;
+  const sv = cfg.survivors;
+  while (v.level < SURVIVOR_MAX_LEVEL && v.level - 1 < sv.levelKills.length && v.kills >= sv.levelKills[v.level - 1]!) {
+    const before = survivorWeapon(def, v.level).weapon;
+    v.level++;
+    const max = Math.round(def.maxHp * (1 + sv.hpPerLevel * (v.level - 1)));
+    v.hp += max - v.maxHp;
+    v.maxHp = max;
+    const now = survivorWeapon(def, v.level).weapon;
+    s.notices.push({ text: now !== before ? `${def.name} level ${v.level} · ${now}` : `${def.name} reached level ${v.level}`, life: 4 });
+  }
 }
 
 /** Keep a walker out of the stronghold, off rocks and off anything built (traps can be walked over). */
@@ -237,6 +276,7 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
     }
     const index = cfg.survivors.roster.indexOf(def);
     const post = survivorPost(s, cfg, index);
+    const gun = survivorWeapon(def, v.level);
     // Fall back when badly hurt; go out again once mostly recovered.
     if (!v.retreating && v.hp < v.maxHp * sv.retreatBelow) v.retreating = true;
     if (v.retreating && v.hp >= v.maxHp * 0.8) v.retreating = false;
@@ -252,7 +292,7 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
         nearestD = d;
         nearest = e;
       }
-      if (d > def.range) continue;
+      if (d > gun.range) continue;
       if (!target) target = e;
       else if (def.perk === "marksman" ? e.hp > target.hp || (e.hp === target.hp && e.id < target.id) : d < Math.hypot(target.x - v.x, target.y - v.y)) target = e;
     }
@@ -262,7 +302,7 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
     let goal = post;
     let speed = def.speed;
     if (v.retreating) goal = door;
-    else if (nearest && nearestD < def.range * 0.45) {
+    else if (nearest && nearestD < gun.range * 0.45) {
       // Too close: back away from it, toward the stronghold side.
       const ax = v.x - nearest.x;
       const ay = v.y - nearest.y;
@@ -275,7 +315,7 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
       // Nothing in range: the collector goes for pickups; anyone steps toward a zombie that is nearly in reach.
       const pick = def.perk === "collector" ? s.pickups.find((p) => Math.hypot(p.x - sh.x, p.y - sh.y) <= sv.leash + 260) : undefined;
       if (pick) goal = { x: pick.x, y: pick.y };
-      else if (nearest && nearestD < def.range + 140) goal = { x: nearest.x, y: nearest.y };
+      else if (nearest && nearestD < gun.range + 140) goal = { x: nearest.x, y: nearest.y };
       else speed = def.speed * 0.6; // strolling back to the post
     }
     // Never past the leash (pickups may pull the collector further out).
@@ -299,7 +339,9 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
       for (const p of [...s.pickups]) if (Math.hypot(p.x - v.x, p.y - v.y) <= 26) collectPickup(s, cfg, p.id);
     }
     if (def.perk === "mechanic" && s.phase === "wave" && sh.hp < sh.maxHp && Math.hypot(v.x - sh.x, v.y - sh.y) <= sv.leash) {
-      sh.hp = Math.min(sh.maxHp, sh.hp + def.perkValue * dt);
+      const before = sh.hp;
+      sh.hp = Math.min(sh.maxHp, sh.hp + def.perkValue * (gun.perkScale ?? 1) * dt);
+      creditKill(s, cfg, v.id, (sh.hp - before) / sv.repairPerKill);
     }
     if (v.retreating && Math.hypot(v.x - door.x, v.y - door.y) < 30) v.hp = Math.min(v.maxHp, v.hp + sv.regenPerSecond * dt);
 
@@ -312,20 +354,26 @@ function stepSurvivors(s: GameState, cfg: GameConfig, dt: number): void {
     }
     v.aim = Math.atan2(target.y - v.y, target.x - v.x);
     if (v.cooldown > 0) return;
-    v.cooldown += 1 / def.fireRate;
+    v.cooldown += 1 / gun.fireRate;
     if (v.cooldown < 0) v.cooldown = 0;
     v.lastShot = s.time;
-    let dmg = survivorDamage(s, cfg, def);
+    let dmg = survivorDamage(s, cfg, def, v);
     if (def.perk === "marksman" && target.type === "brute") dmg *= def.perkValue;
     const mx = v.x + Math.cos(v.aim) * 14;
     const my = v.y + Math.sin(v.aim) * 14;
-    const life = def.pellets > 1 ? (def.range * 1.15) / sv.projectileSpeed : cfg.projectile.maxLifetime;
-    for (let i = 0; i < def.pellets; i++) {
-      if (s.projectiles.length >= cfg.limits.maxProjectiles) break;
-      const a = v.aim + (def.pellets > 1 ? (i / (def.pellets - 1) - 0.5) * 0.45 : 0);
-      s.projectiles.push({ x: mx, y: my, vx: Math.cos(a) * sv.projectileSpeed, vy: Math.sin(a) * sv.projectileSpeed, damage: dmg, life });
-    }
     s.shotsFired++;
+    if (gun.rocketSplash !== undefined) {
+      // A shoulder-fired rocket: homes like the launcher's, bursts on contact.
+      const scale = dmg / gun.damage;
+      s.rockets.push({ x: mx, y: my, vx: Math.cos(v.aim) * cfg.rocket.speed, vy: Math.sin(v.aim) * cfg.rocket.speed, targetId: target.id, damage: dmg, splash: gun.rocketSplash * scale, life: cfg.rocket.maxLifetime, trail: [], by: v.id });
+      return;
+    }
+    const life = gun.pellets > 1 ? (gun.range * 1.15) / sv.projectileSpeed : cfg.projectile.maxLifetime;
+    for (let i = 0; i < gun.pellets; i++) {
+      if (s.projectiles.length >= cfg.limits.maxProjectiles) break;
+      const a = v.aim + (gun.pellets > 1 ? (i / (gun.pellets - 1) - 0.5) * 0.45 : 0);
+      s.projectiles.push({ x: mx, y: my, vx: Math.cos(a) * sv.projectileSpeed, vy: Math.sin(a) * sv.projectileSpeed, damage: dmg, life, by: v.id });
+    }
   });
   // Don't stand on each other.
   for (let i = 0; i < s.survivors.length; i++) {
@@ -942,6 +990,8 @@ export interface Projectile {
   vy: number;
   damage: number;
   life: number;
+  /** The survivor who fired it, for kill credit. */
+  by?: string;
 }
 
 export interface Spawn {
@@ -1724,12 +1774,13 @@ export function rollDrop(s: GameState, cfg: GameConfig, type: EnemyType): number
 }
 
 /** Apply damage; returns true if this hit killed the enemy. A kill pays out exactly once. */
-export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: number): boolean {
+export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: number, by?: string): boolean {
   if (e.hp <= 0) return false;
   e.hp -= amount;
   if (e.hp <= 0) {
     e.hp = 0;
     s.kills++;
+    if (by) creditKill(s, cfg, by);
     const bounty = s.boost?.kind === "bounty" ? cfg.boost.bounty.drops : 1;
     const drop = rollDrop(s, cfg, e.type) * bounty;
     if (!s.boost) s.charge = Math.min(1, s.charge + 1 / cfg.boost.killsToFill);
@@ -2064,7 +2115,7 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
     const w = cfg.enemies[e.type];
     const shGap = distanceToStronghold(s, e.x, e.y) - w.radius;
     // A survivor within reach gets attacked by whoever is passing.
-    if (shGap > 0 && s.survivors.length > 0) {
+    if (shGap > 0 && s.survivors.length > 0 && cfg.survivors.chasers.includes(e.type)) {
       let prey: Survivor | null = null;
       let preyD = cfg.survivors.aggroRadius;
       for (const v of s.survivors) {
@@ -2326,7 +2377,7 @@ function stepRocketLauncher(s: GameState, cfg: GameConfig, slot: Structure, tur:
 }
 
 /** Damage every living zombie within `radius` of a point once. Returns how many were hit. */
-function blast(s: GameState, cfg: GameConfig, x: number, y: number, radius: number, damage: number, hitIds?: Set<number>): number {
+function blast(s: GameState, cfg: GameConfig, x: number, y: number, radius: number, damage: number, hitIds?: Set<number>, by?: string): number {
   let n = 0;
   for (const e of s.enemies) {
     if (e.hp <= 0 || hitIds?.has(e.id)) continue;
@@ -2335,7 +2386,7 @@ function blast(s: GameState, cfg: GameConfig, x: number, y: number, radius: numb
     const rr = radius + cfg.enemies[e.type].radius * 0.5;
     if (dx * dx + dy * dy <= rr * rr) {
       hitIds?.add(e.id);
-      damageEnemy(s, cfg, e, damage);
+      damageEnemy(s, cfg, e, damage, by);
       n++;
     }
   }
@@ -2390,9 +2441,9 @@ function stepRockets(s: GameState, cfg: GameConfig, dt: number): void {
       const ids = new Set<number>();
       if (hit) {
         ids.add(hit.id);
-        damageEnemy(s, cfg, hit, k.damage);
+        damageEnemy(s, cfg, hit, k.damage, k.by);
       }
-      blast(s, cfg, k.x, k.y, r.splashRadius, k.splash, ids);
+      blast(s, cfg, k.x, k.y, r.splashRadius, k.splash, ids, k.by);
       s.blasts.push({ x: k.x, y: k.y, r: r.splashRadius, life: BLAST_SECONDS });
       continue;
     }
@@ -2526,7 +2577,7 @@ function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {
       const dy = e.y - p.y;
       const hitR = cfg.enemies[e.type].radius + cfg.projectile.radius;
       if (dx * dx + dy * dy <= hitR * hitR) {
-        damageEnemy(s, cfg, e, p.damage);
+        damageEnemy(s, cfg, e, p.damage, p.by);
         hit = true;
         break;
       }

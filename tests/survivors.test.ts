@@ -98,7 +98,7 @@ test("survivors: zombies that reach one hurt them; they back away and keep shoot
   const s = createState(cfg, 1, { survivors: ["scout"] });
   assault(s);
   const v = one(s, "scout");
-  const z = zombie(s, v.x + 18, v.y, 1e9, "brute");
+  const z = zombie(s, v.x + 8, v.y, 1e9, "runner");
   const start = { x: v.x, y: v.y };
   run(s, 3);
   assert.ok(v.hp < v.maxHp, "took a hit");
@@ -246,4 +246,142 @@ test("balance: with every survivor a sensible player lasts longer, but not forev
   const withAll = med(waves(ALL));
   assert.ok(withAll >= without + 1, `${withAll} vs ${without}`);
   assert.ok(withAll <= 30, `still ends: ${withAll}`);
+});
+
+// --- Attraction ------------------------------------------------------------------
+
+test("attraction: walkers and runners turn toward a survivor from well away; brutes keep heading for the stronghold", () => {
+  assert.ok(cfg.survivors.aggroRadius >= 120);
+  const s = createState(cfg, 1, { survivors: ["marksman"] });
+  assault(s);
+  const v = one(s, "marksman");
+  v.cooldown = 1e9; // hold fire so nothing dies
+  const side = cfg.survivors.aggroRadius - 15;
+  const walker = zombie(s, v.x + side, v.y, 1e9, "walker");
+  const brute = zombie(s, v.x - side, v.y, 1e9, "brute");
+  walker.attackCooldown = brute.attackCooldown = 1e9;
+  const d0 = { w: Math.hypot(walker.x - v.x, walker.y - v.y), b: Math.hypot(brute.x - s.stronghold.x, brute.y - s.stronghold.y) };
+  const pos = { x: v.x, y: v.y };
+  for (let i = 0; i < 45; i++) {
+    step(s, cfg, DT);
+    v.x = pos.x;
+    v.y = pos.y;
+    v.cooldown = 1e9;
+  }
+  assert.ok(Math.hypot(walker.x - v.x, walker.y - v.y) < d0.w - 30, "the walker closed on the survivor");
+  assert.ok(Math.hypot(brute.x - s.stronghold.x, brute.y - s.stronghold.y) < d0.b - 10, "the brute went for the stronghold");
+  // Beyond the radius a walker ignores them.
+  const far = zombie(s, v.x, v.y + cfg.survivors.aggroRadius + 220, 1e9, "walker");
+  const before = Math.hypot(far.x - s.stronghold.x, far.y - s.stronghold.y);
+  for (let i = 0; i < 30; i++) {
+    step(s, cfg, DT);
+    v.x = pos.x;
+    v.y = pos.y;
+    v.cooldown = 1e9;
+  }
+  assert.ok(Math.hypot(far.x - s.stronghold.x, far.y - s.stronghold.y) < before, "still on its way to the stronghold");
+});
+
+// --- Levels ----------------------------------------------------------------------
+
+import { damageEnemy, survivorWeapon, SURVIVOR_MAX_LEVEL } from "../games/zid/sim.js";
+
+/** Hand a survivor `n` kills. */
+function giveKills(s: GameState, id: string, n: number): void {
+  for (let i = 0; i < n; i++) {
+    const e = zombie(s, 30, 30, 1);
+    damageEnemy(s, cfg, e, 5, id);
+  }
+  s.enemies = s.enemies.filter((e) => e.hp > 0);
+}
+
+test("levels: a survivor's own kills raise their level at the set thresholds, up to five", () => {
+  const s = createState(cfg, 1, { survivors: ["scout", "marksman"] });
+  assault(s);
+  const v = one(s, "scout");
+  const k = cfg.survivors.levelKills;
+  giveKills(s, "scout", k[0]! - 1);
+  assert.equal(v.level, 1);
+  giveKills(s, "scout", 1);
+  assert.equal(v.level, 2);
+  giveKills(s, "scout", k[3]! - k[0]!);
+  assert.equal(v.level, SURVIVOR_MAX_LEVEL);
+  giveKills(s, "scout", 500);
+  assert.equal(v.level, SURVIVOR_MAX_LEVEL, "no further");
+  assert.equal(one(s, "marksman").level, 1, "someone else's kills don't count");
+  // Kills by turrets and traps credit nobody.
+  const t = createState(cfg, 1, { survivors: ["scout"] });
+  assault(t);
+  const e = zombie(t, 30, 30, 1);
+  damageEnemy(t, cfg, e, 5);
+  assert.equal(one(t, "scout").kills, 0);
+});
+
+test("levels: each one adds health (healing the gain) and damage", () => {
+  const s = createState(cfg, 1, { survivors: ["mechanic"] });
+  assault(s);
+  const v = one(s, "mechanic");
+  const def = survivorDef(cfg, "mechanic")!;
+  v.hp = 50;
+  const d1 = survivorDamage(s, cfg, def, v);
+  giveKills(s, "mechanic", cfg.survivors.levelKills[0]!);
+  assert.equal(v.maxHp, Math.round(def.maxHp * (1 + cfg.survivors.hpPerLevel)));
+  assert.equal(v.hp, 50 + v.maxHp - def.maxHp);
+  assert.ok(Math.abs(survivorDamage(s, cfg, def, v) / d1 - (1 + cfg.survivors.damagePerLevel)) < 1e-9);
+});
+
+test("levels: weapons change at levels 3 and 5 (pistol to SMG to assault rifle; rifle to auto rifle to RPG)", () => {
+  const ray = survivorDef(cfg, "scout")!;
+  assert.deepEqual([1, 2, 3, 4, 5].map((l) => survivorWeapon(ray, l).weapon), ["Pistol", "Pistol", "SMG", "SMG", "Assault rifle"]);
+  const dutch = survivorDef(cfg, "marksman")!;
+  assert.deepEqual([1, 3, 5].map((l) => survivorWeapon(dutch, l).weapon), ["Rifle", "Auto rifle", "RPG"]);
+  // Every step up is a real improvement in damage per second.
+  for (const d of cfg.survivors.roster) {
+    const dps = [1, 3, 5].map((l) => {
+      const w = survivorWeapon(d, l);
+      return (w.damage + (w.rocketSplash ?? 0)) * w.pellets * w.fireRate;
+    });
+    assert.ok(dps[1]! > dps[0]! && dps[2]! > dps[1]!, `${d.name}: ${dps.map((x) => x.toFixed(1))}`);
+  }
+});
+
+test("levels: a level-5 marksman fires rockets that burst on a crowd, and the kills are his", () => {
+  const s = createState(cfg, 1, { survivors: ["marksman"] });
+  const keeper = assault(s);
+  const v = one(s, "marksman");
+  v.level = 5;
+  v.kills = cfg.survivors.levelKills[3]!;
+  const crowd = [zombie(s, v.x + 150, v.y - 100, 40), zombie(s, v.x + 165, v.y - 110, 20), zombie(s, v.x + 140, v.y - 112, 20)];
+  for (const e of crowd) e.attackCooldown = 1e9;
+  const kills = v.kills;
+  run(s, 6, [keeper, ...crowd], () => crowd.every((e) => e.hp <= 0));
+  assert.ok(s.rockets.length > 0 || crowd.every((e) => e.hp <= 0), "rockets flew");
+  assert.ok(crowd.every((e) => e.hp <= 0), "the burst caught the whole clump");
+  assert.equal(v.kills, kills + 3);
+  assert.equal(s.projectiles.length, 0, "no bullets from an RPG");
+});
+
+test("levels: they reset with each run", () => {
+  const s = createState(cfg, 1, { survivors: ["scout"] });
+  assault(s);
+  giveKills(s, "scout", cfg.survivors.levelKills[3]!);
+  assert.equal(one(s, "scout").level, 5);
+  const next = createState(cfg, 2, { survivors: ["scout"] });
+  assert.equal(one(next, "scout").level, 1);
+  assert.equal(one(next, "scout").maxHp, survivorDef(cfg, "scout")!.maxHp);
+});
+
+test("levels: a downed survivor keeps their level when they return next wave", () => {
+  const s = createState(cfg, 1, { survivors: ["scout"] });
+  assault(s);
+  const v = one(s, "scout");
+  giveKills(s, "scout", cfg.survivors.levelKills[1]!);
+  assert.equal(v.level, 3);
+  v.hp = 0;
+  step(s, cfg, DT);
+  s.enemies = [];
+  step(s, cfg, DT);
+  assert.equal(v.downed, false);
+  assert.equal(v.level, 3);
+  assert.equal(v.hp, v.maxHp);
 });

@@ -28,6 +28,8 @@ import {
   type Structure,
   type Survivor,
   survivorDef,
+  survivorWeapon,
+  SURVIVOR_MAX_LEVEL,
 } from "./sim.js";
 
 const C = {
@@ -1938,14 +1940,31 @@ function drawSurvivor(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameSta
   ctx.ellipse(0, 0, 7, 12, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
-  // Weapon, held forward on the right side.
-  const len = look.gun - kick * 5;
-  ctx.strokeStyle = "#1b1c1a";
-  ctx.lineWidth = look.gunW + 1;
+  // Weapon, held forward on the right side. It grows with each weapon tier; an RPG is a fat tube on the shoulder.
+  const gun = survivorWeapon(def, v.level);
+  const rpg = gun.rocketSplash !== undefined;
+  const len = look.gun + gun.tier * 5 - kick * 5;
+  ctx.strokeStyle = rpg ? "#4b5540" : "#1b1c1a";
+  ctx.lineWidth = rpg ? 8 : look.gunW + 1 + gun.tier * 0.8;
   ctx.beginPath();
-  ctx.moveTo(4, 5);
-  ctx.lineTo(4 + len, 3);
+  ctx.moveTo(rpg ? -8 : 4, 5);
+  ctx.lineTo(4 + len, rpg ? 5 : 3);
   ctx.stroke();
+  if (rpg) {
+    // Warhead poking out of the tube.
+    ctx.fillStyle = "#c8553d";
+    ctx.beginPath();
+    ctx.arc(4 + len + 2, 5, 4, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (gun.tier > 0) {
+    // Magazine under the barrel on automatic weapons; a drum on the last shotgun.
+    ctx.fillStyle = "#2f332c";
+    if (gun.pellets > 5) {
+      ctx.beginPath();
+      ctx.arc(10, 7, 4, 0, Math.PI * 2);
+      ctx.fill();
+    } else ctx.fillRect(8, 5, 3, 5 + gun.tier);
+  }
   ctx.strokeStyle = look.trim;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
@@ -1992,8 +2011,19 @@ function drawSurvivor(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameSta
   ctx.font = "700 12px system-ui, sans-serif";
   ctx.lineWidth = 3;
   ctx.strokeStyle = "rgba(10,11,10,0.85)";
-  ctx.strokeText(def.name, v.x, v.y - 24);
+  const tag = `${def.name} ${v.level}`;
+  ctx.strokeText(tag, v.x, v.y - 24);
   ctx.fillStyle = v.retreating ? C.warn : look.trim;
-  ctx.fillText(def.name, v.x, v.y - 24);
+  ctx.fillText(tag, v.x, v.y - 24);
+  // Progress to the next level: a thin gold line under the name.
+  const need = cfg.survivors.levelKills[v.level - 1];
+  if (need !== undefined && v.level < SURVIVOR_MAX_LEVEL) {
+    const from = v.level >= 2 ? cfg.survivors.levelKills[v.level - 2]! : 0;
+    const k = Math.max(0, Math.min(1, (v.kills - from) / (need - from)));
+    ctx.fillStyle = "rgba(10,11,10,0.7)";
+    ctx.fillRect(v.x - 14, v.y - 14, 28, 2);
+    ctx.fillStyle = C.coin;
+    ctx.fillRect(v.x - 14, v.y - 14, 28 * k, 2);
+  }
   if (v.hp < v.maxHp) bar(ctx, v.x - 14, v.y - 18, 28, 4, v.hp / v.maxHp, v.hp / v.maxHp > 0.35 ? C.good : C.bad);
 }

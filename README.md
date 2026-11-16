@@ -37,6 +37,16 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Survivor levels and zombie attraction
+
+- **Levels (1 to 5), earned each run** from a survivor's own kills (20, 60, 130, 240). Each level adds 15% health and 12% damage. The mechanic also earns progress by repairing. Levels reset every run; unlocks stay.
+- **Better weapons at levels 3 and 5:**
+  - Ray: Pistol, SMG, Assault rifle.
+  - Dutch: Rifle, Auto rifle, RPG (homing rockets with splash).
+  - Patch: Shotgun, Auto shotgun, Drum shotgun (and double repair speed).
+- The name tag shows the level, with a gold line for progress to the next; the weapon drawn changes with each tier.
+- **Attraction:** walkers and runners now turn on a survivor from about two tiles away (130, was 55). Brutes ignore survivors and keep going for the stronghold. Survivors have 50% more health to cope.
+
 ### Past the wave-11 wall
 
 Real runs kept ending on wave 11: zombie health compounded faster than a full, maxed defence could answer.

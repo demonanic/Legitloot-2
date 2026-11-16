@@ -37,6 +37,16 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Past the wave-11 wall
+
+Real runs kept ending on wave 11: zombie health compounded faster than a full, maxed defence could answer.
+
+- **Gentler curve:** zombie health grows 24% a wave (was 28.5%). Wave 11 is now about as tough as wave 9 used to be.
+- **More to buy late:** Speed and Damage upgrades go to five levels (30, 50, 80, 120, 170); barricades reinforce four times; a sixth base level (550) raises every limit and the stronghold's health to 820. Range stays at three levels.
+- Barrel and tube counts stop growing at four (five for rockets and shotguns) so weapons still fit their tiles.
+- The scripted careful player now falls around wave 20 (was 16). Target band: waves 14 to 24.
+- The defeat screen now says "Salvage earned this run +N · you now hold M".
+
 ### Survivors
 
 - **Unlocked for good with Salvage**, from the base menu's Survivors page, between waves. Unlocks are saved in the browser and every later run starts with them.

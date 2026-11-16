@@ -386,6 +386,7 @@ export const baseConfig: GameConfig = {
       { cost: 180, machineGuns: 7, mortars: 3, gatlings: 1, rockets: 1, shotguns: 3, flamers: 1, traps: 14, maxHp: 560 },
       { cost: 280, machineGuns: 9, mortars: 4, gatlings: 2, rockets: 1, shotguns: 4, flamers: 2, traps: 18, maxHp: 640 },
       { cost: 400, machineGuns: 12, mortars: 5, gatlings: 3, rockets: 2, shotguns: 5, flamers: 3, traps: 24, maxHp: 720 },
+      { cost: 550, machineGuns: 14, mortars: 6, gatlings: 4, rockets: 3, shotguns: 6, flamers: 4, traps: 30, maxHp: 820 },
     ],
   },
   construction: {
@@ -468,15 +469,15 @@ export const baseConfig: GameConfig = {
   tripwire: { cost: 25, length: 192, blasts: 5, blastRadius: 32, damage: 70 },
   trapDamagePerBaseLevel: 0.6,
   unlocks: { "machine-gun": 1, mortar: 1, barricade: 1, mine: 1, tripwire: 2, shotgun: 2, gatling: 3, flamer: 3, rocket: 4 },
-  barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25], perLevel: 0.5 } },
+  barricade: { cost: 20, maxHp: 160, reinforce: { costs: [15, 25, 40, 60], perLevel: 0.5 } },
   repair: { structureShare: 0.5, rubbleShare: 0.6, strongholdCostPerHp: 0.25, assaultMultiplier: 1.5 },
   recycle: { intactShare: 0.5, rubbleShare: 0.25 },
   pathing: { blockedTileCost: 1000 },
   upgrades: {
     // tuned: per supply spent, an upgrade is roughly as strong as a new turret,
     // and the two paths multiply, so investing in one turret pays off.
-    speed: { costs: [30, 50, 80], perLevel: 0.5 },
-    strength: { costs: [30, 50, 80], perLevel: 0.5 },
+    speed: { costs: [30, 50, 80, 120, 170], perLevel: 0.5 },
+    strength: { costs: [30, 50, 80, 120, 170], perLevel: 0.5 },
     range: { costs: [25, 40, 60], perLevel: 0.2 },
   },
   enemies: {
@@ -488,7 +489,7 @@ export const baseConfig: GameConfig = {
   waves: {
     baseCount: 40,
     countPerWave: 6,
-    hpGrowthPerWave: 0.285, // tuned with scripts/balance.mjs: sensible player falls around waves 11-15 and takes hits from wave 1
+    hpGrowthPerWave: 0.24, // lowered from 0.285 after real play kept ending on wave 11; see scripts/balance.mjs
     runnerFrom: 2,
     runnerShareStep: 0.05,
     runnerShareMax: 0.3,
@@ -533,7 +534,7 @@ export const baseConfig: GameConfig = {
     airstrike: { bombs: 9, spacing: 95, radius: 100, warnSeconds: 1.2, interval: 0.16, damageWalkers: 3, unlockBase: 2 },
     shield: { seconds: 6, regenPerSecond: 0.04, unlockBase: 3 },
   },
-  balance: { typicalDefeatWaveMin: 10, typicalDefeatWaveMax: 18 },
+  balance: { typicalDefeatWaveMin: 14, typicalDefeatWaveMax: 24 },
 };
 
 /**

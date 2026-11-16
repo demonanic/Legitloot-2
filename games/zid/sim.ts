@@ -1683,8 +1683,9 @@ export function pickTarget(s: GameState, cfg: GameConfig, from: { x: number; y: 
  */
 export function barrelCount(st: Structure): number {
   const speed = st.turret?.speed ?? 0;
-  if (st.kind === "rocket" || st.kind === "shotgun") return 2 + speed;
-  if (st.kind === "machine-gun" || st.kind === "mortar") return 1 + speed;
+  // Capped so the weapon still fits its tile; Speed levels beyond that show as rank rings.
+  if (st.kind === "rocket" || st.kind === "shotgun") return Math.min(5, 2 + speed);
+  if (st.kind === "machine-gun" || st.kind === "mortar") return Math.min(4, 1 + speed);
   return 1;
 }
 

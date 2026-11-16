@@ -844,7 +844,11 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillStyle = C.coin;
     ctx.font = "700 24px system-ui, sans-serif";
     ctx.fillText(
-      s.salvageBanked > 0 ? `Salvage kept +${s.salvageBanked} · stockpile ${view.salvage}` : view.salvage > 0 ? `Salvage stockpile ${view.salvage}` : "Send salvage runs to keep something after defeat",
+      s.salvageBanked > 0
+        ? `Salvage earned this run +${s.salvageBanked} · you now hold ${view.salvage}`
+        : view.salvage > 0
+          ? `Salvage held ${view.salvage}`
+          : "Send salvage runs to keep something after defeat",
       W / 2,
       H / 2 + 108,
     );

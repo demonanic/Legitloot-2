@@ -164,3 +164,22 @@ test("popups: a paying kill leaves a floating +N that rises and fades", () => {
   step(s, cfg, 0.6);
   assert.equal(s.popups.length, 0, "gone after a second");
 });
+
+test("late game: weapons upgrade to five levels of Speed and Damage, and the base to a sixth level", () => {
+  assert.equal(cfg.upgrades.speed.costs.length, 5);
+  assert.equal(cfg.upgrades.strength.costs.length, 5);
+  assert.equal(levels.length, 6);
+  const s = prep(100_000);
+  for (let i = 1; i < levels.length; i++) assert.ok(upgradeBase(s, cfg).ok);
+  assert.equal(s.stronghold.maxHp, levels[5]!.maxHp);
+  const t = buildTurret(s, cfg, 4, 4);
+  assert.ok(t.ok);
+  for (let i = 0; i < 5; i++) assert.ok(upgradeTurret(s, cfg, t.structure.id, "speed").ok, `speed ${i + 1}`);
+  for (let i = 0; i < 5; i++) assert.ok(upgradeTurret(s, cfg, t.structure.id, "strength").ok, `damage ${i + 1}`);
+  assert.deepEqual(upgradeTurret(s, cfg, t.structure.id, "speed"), { ok: false, reason: "max-level" });
+  // Each level costs more than the last.
+  for (const path of ["speed", "strength"] as const) {
+    const c = cfg.upgrades[path].costs;
+    for (let i = 1; i < c.length; i++) assert.ok(c[i]! > c[i - 1]!);
+  }
+});

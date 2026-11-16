@@ -37,10 +37,10 @@ export interface Turret {
   barrel: number;
 }
 
-export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "barricade" | "mine" | "tripwire";
-export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer"];
+export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "tesla" | "barricade" | "mine" | "tripwire";
+export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla"];
 export const TRAP_KINDS: readonly StructureKind[] = ["mine", "tripwire"];
-export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "mine", "tripwire", "barricade"];
+export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla", "mine", "tripwire", "barricade"];
 
 export function isTrap(kind: StructureKind): boolean {
   return kind === "mine" || kind === "tripwire";
@@ -52,6 +52,7 @@ export const KIND_NAMES: Record<StructureKind, string> = {
   gatling: "Gatling gun",
   shotgun: "Shotgun",
   flamer: "Flamethrower",
+  tesla: "Tesla coil",
   rocket: "Rocket launcher",
   mortar: "Mortar",
   barricade: "Barricade",
@@ -961,6 +962,15 @@ export interface Bomb {
 }
 export const SPLAT_SECONDS = 5;
 
+/** A lightning bolt from a Tesla coil through the zombies it struck, for drawing only. */
+export interface Arc {
+  /** One piece of lightning per strike: from the coil or an earlier-struck zombie to the next. */
+  segments: { x1: number; y1: number; x2: number; y2: number }[];
+  life: number;
+  seed: number;
+}
+export const ARC_SECONDS = 0.22;
+
 /** A brief explosion marker, for drawing only. */
 export interface Blast {
   x: number;
@@ -1032,6 +1042,7 @@ export interface GameState {
   popups: Popup[];
   /** Splatters where zombies died, for drawing only. */
   splats: Splat[];
+  arcs: Arc[];
   /** Collectable icons on the field. */
   pickups: Pickup[];
   nextPickupId: number;
@@ -1121,6 +1132,7 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     notices: [],
     popups: [],
     splats: [],
+    arcs: [],
     pickups: [],
     nextPickupId: 1,
     pickupTimer: cfg.pickups.everyMin,
@@ -1228,6 +1240,8 @@ export function buildCost(cfg: GameConfig, kind: StructureKind): number {
       return cfg.shotgun.cost;
     case "flamer":
       return cfg.flamer.cost;
+    case "tesla":
+      return cfg.tesla.cost;
     case "rocket":
       return cfg.rocket.cost;
     case "mine":
@@ -1251,6 +1265,8 @@ function kindMaxHp(cfg: GameConfig, kind: StructureKind): number {
       return cfg.shotgun.maxHp;
     case "flamer":
       return cfg.flamer.maxHp;
+    case "tesla":
+      return cfg.tesla.maxHp;
     case "rocket":
       return cfg.rocket.maxHp;
     case "mine":
@@ -1298,6 +1314,8 @@ export function buildLimit(s: GameState, cfg: GameConfig, kind: StructureKind): 
       return lvl.shotguns;
     case "flamer":
       return lvl.flamers;
+    case "tesla":
+      return lvl.teslas;
     case "rocket":
       return lvl.rockets;
     case "mine":
@@ -1430,7 +1448,7 @@ export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePat
   const base = costs[level]!;
   // Heavier weapons' upgrades cost more, rounded to a multiple of 5.
   const mult =
-    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : st.kind === "shotgun" ? cfg.shotgun.upgradeCostMultiplier : st.kind === "flamer" ? cfg.flamer.upgradeCostMultiplier : 1;
+    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : st.kind === "shotgun" ? cfg.shotgun.upgradeCostMultiplier : st.kind === "flamer" ? cfg.flamer.upgradeCostMultiplier : st.kind === "tesla" ? cfg.tesla.upgradeCostMultiplier : 1;
   return mult === 1 ? base : Math.round((base * mult) / 5) * 5;
 }
 
@@ -1593,6 +1611,7 @@ export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "m
   else if (kind === "gatling") [rate, dmg] = [g.minRate + (g.maxRate - g.minRate) * t.spin, g.damage];
   else if (kind === "shotgun") [rate, dmg] = [cfg.shotgun.fireRate, cfg.shotgun.damage];
   else if (kind === "flamer") [rate, dmg] = [cfg.flamer.fireRate, cfg.flamer.damage];
+  else if (kind === "tesla") [rate, dmg] = [cfg.tesla.fireRate, cfg.tesla.damage];
   return {
     fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed),
     damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength),
@@ -1763,6 +1782,7 @@ export function turretRange(cfg: GameConfig, st: Structure): number {
   if (st.kind === "rocket") return cfg.rocket.range;
   if (st.kind === "shotgun") return cfg.shotgun.range;
   if (st.kind === "flamer") return cfg.flamer.range;
+  if (st.kind === "tesla") return cfg.tesla.range;
   return cfg.turret.range * (1 + cfg.upgrades.range.perLevel * (st.turret?.range ?? 0));
 }
 
@@ -2213,6 +2233,10 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       stepFlamer(s, cfg, slot, tur, dt);
       continue;
     }
+    if (slot.kind === "tesla") {
+      stepTesla(s, cfg, slot, tur, dt);
+      continue;
+    }
     const gatling = slot.kind === "gatling";
     const t = gatling ? cfg.gatling : cfg.turret;
     tur.cooldown -= dt;
@@ -2282,6 +2306,81 @@ function stepShotgun(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret
     s.projectiles.push({ x: mx, y: my, vx: Math.cos(a) * g.projectileSpeed, vy: Math.sin(a) * g.projectileSpeed, damage: stats.damage, life });
   }
   s.shotsFired++;
+}
+
+/**
+ * The chain a zap would follow from a coil: the nearest zombie in range, then
+ * up to `jumps` more. Each jump goes to the closest not-yet-hit zombie within
+ * arcRadius of the last one struck; if there is none, the bolt forks from
+ * whichever struck zombie has one in reach. Returns each strike in order with
+ * the index of the strike it jumped from (-1 = from the coil itself).
+ */
+export function teslaChain(s: GameState, cfg: GameConfig, slot: Structure): { enemy: Enemy; from: number }[] {
+  const t = cfg.tesla;
+  const first = pickNearest(s, slot.x, slot.y, t.range, null);
+  if (!first) return [];
+  const chain = [{ enemy: first, from: -1 }];
+  const hit = new Set<number>([first.id]);
+  for (let j = 0; j < t.jumps; j++) {
+    // Prefer carrying on from the last strike; otherwise fork from the most recent one that can reach something.
+    let found: { enemy: Enemy; from: number } | null = null;
+    for (let k = chain.length - 1; k >= 0 && !found; k--) {
+      const src = chain[k]!.enemy;
+      const next = pickNearest(s, src.x, src.y, t.arcRadius, hit);
+      if (next) found = { enemy: next, from: k };
+    }
+    if (!found) break;
+    chain.push(found);
+    hit.add(found.enemy.id);
+  }
+  return chain;
+}
+
+/** Nearest living zombie within `range` of a point, skipping any in `skip` (ties: lowest id). */
+function pickNearest(s: GameState, x: number, y: number, range: number, skip: Set<number> | null): Enemy | null {
+  let best: Enemy | null = null;
+  let bestD = Infinity;
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || skip?.has(e.id)) continue;
+    const d = Math.hypot(e.x - x, e.y - y);
+    if (d > range) continue;
+    if (!best || d < bestD || (d === bestD && e.id < best.id)) {
+      best = e;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** Tesla coil: each zap strikes a chain of zombies at once, weaker with every jump. */
+function stepTesla(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const t = cfg.tesla;
+  const stats = turretStats(cfg, tur, "tesla");
+  tur.cooldown -= dt;
+  if (tur.cooldown > 0) return;
+  const chain = teslaChain(s, cfg, slot);
+  tur.targetId = chain[0]?.enemy.id ?? null;
+  if (chain.length === 0) {
+    tur.cooldown = 0;
+    return;
+  }
+  tur.cooldown += 1 / stats.fireRate;
+  if (tur.cooldown < 0) tur.cooldown = 0;
+  tur.lastShot = s.time;
+  tur.shots++;
+  s.shotsFired++;
+  tur.aim = Math.atan2(chain[0]!.enemy.y - slot.y, chain[0]!.enemy.x - slot.x);
+  // Record the bolt's branches before anything dies, for drawing.
+  const segments = chain.map((c) => {
+    const src = c.from < 0 ? { x: slot.x, y: slot.y - 12 } : chain[c.from]!.enemy;
+    return { x1: src.x, y1: src.y, x2: c.enemy.x, y2: c.enemy.y };
+  });
+  if (s.arcs.length < 60) s.arcs.push({ segments, life: ARC_SECONDS, seed: s.shotsFired });
+  let dmg = stats.damage;
+  for (const c of chain) {
+    damageEnemy(s, cfg, c.enemy, dmg);
+    dmg *= t.falloff;
+  }
 }
 
 /** Whether a point is inside a flamethrower's cone. */
@@ -2548,6 +2647,10 @@ function stepBlasts(s: GameState, dt: number): void {
   if (s.notices.length > 0) {
     for (const n of s.notices) n.life -= dt;
     s.notices = s.notices.filter((n) => n.life > 0);
+  }
+  if (s.arcs.length > 0) {
+    for (const a of s.arcs) a.life -= dt;
+    s.arcs = s.arcs.filter((a) => a.life > 0);
   }
   if (s.splats.length > 0) {
     for (const p of s.splats) p.life -= dt;

@@ -234,6 +234,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
           ? [
               buildButton("a0", "shotgun", "Shotgun"),
               buildButton("b0", "flamer", "Flamer"),
+              buildButton("a1", "tesla", "Tesla"),
               { slot: "a2", label: "Traps & walls ›", enabled: true, action: { kind: "page", page: "traps" } },
               close,
             ]
@@ -353,7 +354,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
 
 /** " · unlocks Gatling" when that base level unlocks something, else "". */
 function nextUnlock(cfg: GameConfig, baseLevel: number): string {
-  const names: Record<string, string> = { tripwire: "Trip wire", shotgun: "Shotgun", flamer: "Flamethrower", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
+  const names: Record<string, string> = { tripwire: "Trip wire", shotgun: "Shotgun", flamer: "Flamethrower", tesla: "Tesla coil", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
   const kinds = Object.entries(cfg.unlocks)
     .filter(([, lvl]) => lvl === baseLevel)
     .map(([k]) => names[k] ?? k);

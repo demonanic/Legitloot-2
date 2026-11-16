@@ -37,6 +37,12 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Tesla coil
+
+- **Tesla coil** (150, base level 5; one at level 5, two at level 6), on the close-range build page.
+- It zaps the nearest zombie within 170, then the bolt jumps to the closest zombie within 90 of the last one struck, up to five jumps. If nothing is in reach ahead, it forks from an earlier-struck zombie, so a tight clump is all hit. Each jump does 80% of the one before; no zombie is struck twice by one zap.
+- Hits instantly and never misses. Speed and Damage upgrades apply (1.5× price); Speed adds coil rings, Damage a bigger, whiter ball.
+
 ### Survivor levels and zombie attraction
 
 - **Levels (1 to 5), earned each run** from a survivor's own kills (20, 60, 130, 240). Each level adds 15% health and 12% damage. The mechanic also earns progress by repairing. Levels reset every run; unlocks stay.

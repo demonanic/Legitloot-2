@@ -58,7 +58,7 @@ function buildNearest(s: GameState, cfg: GameConfig, kind: StructureKind = "mach
   return !!t && buildStructure(s, cfg, kind, t.col, t.row).ok;
 }
 
-const WEAPON_PREFERENCE: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer"];
+const WEAPON_PREFERENCE: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla"];
 
 /**
  * Build the unlocked weapon kind with the most room left under its cap

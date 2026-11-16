@@ -17,6 +17,7 @@ import {
   barrelSpacing,
   lastBarrel,
   SPLAT_SECONDS,
+  ARC_SECONDS,
   salvageUsable,
   BOOST_KINDS,
   boostUnlocked,
@@ -436,6 +437,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     else if (sl.kind === "rocket") drawRocketLauncher(ctx, cfg, s, sl);
     else if (sl.kind === "shotgun") drawShotgun(ctx, cfg, s, sl);
     else if (sl.kind === "flamer") drawFlamer(ctx, cfg, s, sl);
+    else if (sl.kind === "tesla") drawTesla(ctx, cfg, s, sl);
     else drawMachineGun(ctx, cfg, s, sl);
     {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
@@ -679,6 +681,38 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+  }
+
+  // Tesla bolts: jagged lightning from the coil through every zombie it struck, re-jittered each frame.
+  for (const a of s.arcs) {
+    const k = a.life / ARC_SECONDS;
+    for (const [width, color] of [[9, `rgba(120,190,255,${(0.35 * k).toFixed(3)})`], [3.5, `rgba(235,246,255,${(0.95 * k).toFixed(3)})`]] as const) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      a.segments.forEach((g, i) => {
+        const len = Math.hypot(g.x2 - g.x1, g.y2 - g.y1);
+        const steps = Math.max(2, Math.round(len / 18));
+        const nx = -(g.y2 - g.y1) / (len || 1);
+        const ny = (g.x2 - g.x1) / (len || 1);
+        ctx.moveTo(g.x1, g.y1);
+        for (let j = 1; j < steps; j++) {
+          const t = j / steps;
+          const off = (hash01(a.seed + Math.floor(s.time * 40), i * 31 + j) - 0.5) * 16;
+          ctx.lineTo(g.x1 + (g.x2 - g.x1) * t + nx * off, g.y1 + (g.y2 - g.y1) * t + ny * off);
+        }
+        ctx.lineTo(g.x2, g.y2);
+      });
+      ctx.stroke();
+    }
+    // A spark where each zombie is struck.
+    ctx.fillStyle = `rgba(235,246,255,${(0.9 * k).toFixed(3)})`;
+    for (const g of a.segments) {
+      ctx.beginPath();
+      ctx.arc(g.x2, g.y2, 5 + 4 * k, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   // Pickups: tap before they fade.
@@ -2026,4 +2060,69 @@ function drawSurvivor(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameSta
     ctx.fillRect(v.x - 14, v.y - 14, 28 * k, 2);
   }
   if (v.hp < v.maxHp) bar(ctx, v.x - 14, v.y - 18, 28, 4, v.hp / v.maxHp, v.hp / v.maxHp > 0.35 ? C.good : C.bad);
+}
+
+/**
+ * Tesla coil: a base plate, a stack of coil rings and a glowing top ball that
+ * crackles while it charges and flares when it zaps. Speed adds coil rings;
+ * Damage makes the ball bigger and whiter.
+ */
+function drawTesla(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  const r = cfg.tesla.radius;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 26, sl.y - 36, 52, 6, sl.hp / sl.maxHp, C.warn);
+  const zap = fresh(s, t.lastShot, 0.25);
+  // Base plate: an octagon.
+  ctx.fillStyle = "#4a5560";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    ctx.lineTo(sl.x + Math.cos(a) * r, sl.y + Math.sin(a) * r);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  drawRank(ctx, sl.x, sl.y, r, t);
+  // Coil rings, copper, shrinking toward the top (drawn as stacked ellipses up the tile).
+  const rings = 3 + Math.min(4, t.speed);
+  for (let i = 0; i < rings; i++) {
+    const k = i / rings;
+    ctx.strokeStyle = i % 2 === 0 ? "#c98a4a" : "#a06a32";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(sl.x, sl.y + 6 - k * 16, 13 - k * 6, 5 - k * 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  // Top ball: pulses while charging, flares on a zap.
+  const bx = sl.x;
+  const by = sl.y - 12;
+  const ball = 6 + t.strength * 0.8 + zap * 3;
+  const charge = 0.5 + 0.5 * Math.sin(s.time * 10 + sl.id);
+  ctx.fillStyle = `rgba(120,190,255,${(0.25 + 0.2 * charge + 0.4 * zap).toFixed(3)})`;
+  ctx.beginPath();
+  ctx.arc(bx, by, ball + 6 + zap * 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = t.strength >= 3 || zap > 0.5 ? "#f2f9ff" : "#bfe2ff";
+  ctx.strokeStyle = "#2b3d52";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(bx, by, ball, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // Idle crackle: little sparks jumping off the ball.
+  ctx.strokeStyle = "rgba(200,230,255,0.85)";
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 2 + Math.min(3, t.strength); i++) {
+    const tick = Math.floor(s.time * 12) + i * 7 + sl.id;
+    if (hash01(tick, 1) < 0.5) continue;
+    const a = hash01(tick, 2) * Math.PI * 2;
+    const l = ball + 5 + hash01(tick, 3) * 9;
+    ctx.beginPath();
+    ctx.moveTo(bx + Math.cos(a) * ball, by + Math.sin(a) * ball);
+    ctx.lineTo(bx + Math.cos(a + 0.4) * (ball + l) * 0.6, by + Math.sin(a + 0.4) * (ball + l) * 0.6);
+    ctx.lineTo(bx + Math.cos(a) * l, by + Math.sin(a) * l);
+    ctx.stroke();
+  }
 }

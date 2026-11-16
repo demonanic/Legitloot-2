@@ -251,8 +251,122 @@ test("menu: a third build page offers Shotgun and Flamethrower; pages cycle", ()
   const c = panelModel(s, cfg, { col: 2, row: 4 }, "close");
   assert.deepEqual(
     c.buttons.map((b) => (b.action.kind === "build" ? b.action.structure : b.action.kind)),
-    ["shotgun", "flamer", "page", "close"],
+    ["shotgun", "flamer", "tesla", "page", "close"],
   );
   assert.match(c.buttons[0]!.label, /base 2/);
-  assert.deepEqual(c.buttons[2]!.action, { kind: "page", page: "traps" });
+  assert.deepEqual(c.buttons[3]!.action, { kind: "page", page: "traps" });
+});
+
+// --- Tesla coil ------------------------------------------------------------------
+
+import { teslaChain, turretStats } from "../games/zid/sim.js";
+
+function coil(s: GameState) {
+  s.phase = "prep";
+  const r = buildStructure(s, cfg, "tesla", 4, 5);
+  assert.ok(r.ok, JSON.stringify(r));
+  s.phase = "wave";
+  return r.structure;
+}
+
+test("tesla: unlocks at base level 5 with its own limit", () => {
+  const s = createState(cfg, 1);
+  s.currency = 10_000;
+  assert.equal(cfg.unlocks.tesla, 5);
+  s.stronghold.level = 3;
+  assert.equal(checkBuild(s, cfg, 4, 5, "tesla"), "locked");
+  s.stronghold.level = 4;
+  assert.ok(buildStructure(s, cfg, "tesla", 4, 5).ok);
+  assert.equal(checkBuild(s, cfg, 5, 5, "tesla"), "limit-reached");
+  s.stronghold.level = 5;
+  assert.equal(checkBuild(s, cfg, 5, 5, "tesla"), null);
+});
+
+test("tesla: the bolt jumps along zombies that are close enough, nearest first, and stops at a gap", () => {
+  const s = assault();
+  const c = coil(s);
+  const gap = cfg.tesla.arcRadius - 20;
+  const a = zombie(s, c.x, c.y - 100);
+  const b = zombie(s, c.x + gap, c.y - 100);
+  const d = zombie(s, c.x + gap * 2, c.y - 100);
+  const far = zombie(s, c.x + gap * 2 + cfg.tesla.arcRadius + 40, c.y - 100); // too far to jump to
+  const lone = zombie(s, c.x - 400, c.y + 500);
+  assert.deepEqual(teslaChain(s, cfg, c).map((e) => e.enemy.id), [a.id, b.id, d.id]);
+  step(s, cfg, DT);
+  const dmg = turretStats(cfg, c.turret!, "tesla").damage;
+  const f = cfg.tesla.falloff;
+  assert.ok(Math.abs(1e9 - a.hp - dmg) < 1e-6, "full damage to the first");
+  assert.ok(Math.abs(1e9 - b.hp - dmg * f) < 1e-6, "less to the second");
+  assert.ok(Math.abs(1e9 - d.hp - dmg * f * f) < 1e-6, "less again to the third");
+  assert.equal(far.hp, 1e9);
+  assert.equal(lone.hp, 1e9);
+  assert.equal(s.arcs.length, 1);
+  assert.equal(s.arcs[0]!.segments.length, 3, "one piece of lightning per zombie struck");
+});
+
+test("tesla: one zombie is never struck twice by the same zap, and the chain has a maximum length", () => {
+  const s = assault();
+  const c = coil(s);
+  // A tight clump of ten: plenty to jump to.
+  const clump = Array.from({ length: 10 }, (_, i) => zombie(s, c.x + (i % 5) * 14, c.y - 90 - Math.floor(i / 5) * 14));
+  const chain = teslaChain(s, cfg, c);
+  assert.equal(chain.length, cfg.tesla.jumps + 1);
+  assert.equal(new Set(chain.map((e) => e.enemy.id)).size, chain.length);
+  step(s, cfg, DT);
+  assert.equal(clump.filter((e) => e.hp < 1e9).length, cfg.tesla.jumps + 1);
+});
+
+test("tesla: nothing in range means no zap; a zombie out of range can still be reached by a jump", () => {
+  const s = assault();
+  const c = coil(s);
+  const out = zombie(s, c.x, c.y - cfg.tesla.range - 60);
+  run(s, 1);
+  assert.equal(out.hp, 1e9);
+  assert.equal(s.arcs.length, 0);
+  const inside = zombie(s, c.x, c.y - cfg.tesla.range + 10);
+  assert.ok(Math.hypot(out.x - inside.x, out.y - inside.y) <= cfg.tesla.arcRadius);
+  run(s, 1);
+  assert.ok(inside.hp < 1e9);
+  assert.ok(out.hp < 1e9, "the bolt carried on to it");
+});
+
+test("tesla: kills along the chain each pay once; Speed and Damage upgrades apply", () => {
+  const s = assault();
+  const c = coil(s);
+  for (let i = 0; i < 3; i++) zombie(s, c.x + i * 30, c.y - 100, 1);
+  zombie(s, 700, 1270).attackCooldown = 1e9;
+  const kills = s.kills;
+  step(s, cfg, DT);
+  assert.equal(s.kills - kills, 3);
+  const base = turretStats(cfg, c.turret!, "tesla");
+  s.phase = "prep";
+  assert.ok(upgradeTurret(s, cfg, c.id, "speed").ok);
+  assert.ok(upgradeTurret(s, cfg, c.id, "strength").ok);
+  assert.deepEqual(upgradeTurret(s, cfg, c.id, "range"), { ok: false, reason: "not-for-mortar" });
+  const up = turretStats(cfg, c.turret!, "tesla");
+  assert.ok(up.fireRate > base.fireRate && up.damage > base.damage);
+});
+
+test("menu: the Tesla coil is on the close-range page, marked with the base level it needs", () => {
+  const s = createState(cfg, 1);
+  const page = panelModel(s, cfg, { col: 2, row: 4 }, "close");
+  const b = page.buttons.find((x) => x.action.kind === "build" && x.action.structure === "tesla")!;
+  assert.equal(b.enabled, false);
+  assert.match(b.label, /base 5/);
+});
+
+test("tesla: when the bolt runs out of zombies ahead, it forks back to one near an earlier strike", () => {
+  const s = assault();
+  const c = coil(s);
+  const r = cfg.tesla.arcRadius;
+  // Nearest to the coil is the middle one; one sits to its right, one to its left, each in reach of the middle only.
+  const mid = zombie(s, c.x, c.y - 100);
+  const right = zombie(s, c.x + r - 15, c.y - 110);
+  const left = zombie(s, c.x - r + 5, c.y - 112);
+  assert.ok(Math.hypot(left.x - right.x, left.y - right.y) > r, "left is out of reach of right");
+  const chain = teslaChain(s, cfg, c);
+  assert.deepEqual(chain.map((x) => x.enemy.id), [mid.id, right.id, left.id]);
+  assert.deepEqual(chain.map((x) => x.from), [-1, 0, 0], "both branches leave the middle zombie");
+  step(s, cfg, DT);
+  assert.ok(left.hp < 1e9);
 });

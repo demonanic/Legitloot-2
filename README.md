@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Tutorial
+
+- **Guided start** for a first-time player (stored in the browser as `zid.tutorial`): welcome, Supplies, build your first turret (waits until you do), upgrade/repair/recycle, and starting the wave. The game is paused while each card is up. "Skip tutorial" ends it and stops automatic tips.
+- **One-time tips** the first time each thing happens: the first wave, pickups, a full charge meter, mortars, survivors, the base menu after wave 1, the truck returning, having Salvage, and defeat.
+- **"?" button** (under Rings) opens a "How to play" reference that pages through every tip, any time.
+- The HUD now reads "Salvage N (kept)".
+
 ### Tesla coil
 
 - **Tesla coil** (150, base level 5; one at level 5, two at level 6), on the close-range build page.

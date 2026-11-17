@@ -7,6 +7,7 @@ import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
 import { panelModel, type BuildPage, type PanelAction, type PanelSlot } from "./panel.js";
+import { TIPS, cardLayout, tipById, type CardButtonId, type CardLayout, type TipHighlight, type TipId } from "./tutorial.js";
 import {
   BLAST_SECONDS,
   POPUP_SECONDS,
@@ -90,7 +91,18 @@ export interface ViewState {
   showRanges: boolean;
   /** The permanent Salvage stockpile (kept between runs), for the HUD and end screen. */
   salvage: number;
+  /** The tutorial card showing, if any: a tip (guided-start step or one-time tip), or a page of the reference. */
+  tutorial: { tip: TipId; guided: boolean } | null;
+  help: number | null;
 }
+
+/** The card on screen right now, if any (the reference wins over a tip). */
+export function currentCard(cfg: GameConfig, view: ViewState): CardLayout | null {
+  if (view.help !== null) return cardLayout(cfg, TIP_ORDER[view.help]!, { kind: "help", index: view.help });
+  if (view.tutorial) return cardLayout(cfg, view.tutorial.tip, view.tutorial.guided ? { kind: "guided" } : { kind: "tip" });
+  return null;
+}
+const TIP_ORDER: TipId[] = TIPS.map((t) => t.id);
 
 export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
   "run-over": "The run is over",
@@ -129,6 +141,10 @@ export interface UiActions {
   restart(): void;
   toggleDiagnostics(): void;
   toggleRanges(): void;
+  /** A button on the tutorial card. */
+  tutorial(button: CardButtonId): void;
+  /** Open the "How to play" reference. */
+  openHelp(): void;
 }
 
 /** Fixed button rectangles in world units, shared by drawing and hit tests. */
@@ -159,6 +175,7 @@ export function buttonRects(cfg: GameConfig) {
     meter: { x: 40, y: h - 40, w: w - 80, h: 16 },
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
     ranges: { x: w - 104, y: 82, w: 90, h: 36 },
+    help: { x: w - 104, y: 126, w: 90, h: 44 },
   };
 }
 
@@ -202,6 +219,42 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
     // While the end screen is up it blocks all world taps; only its button acts.
     rectRegion("end-screen", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, over),
     rectRegion("restart", r.restart, () => act.restart(), over),
+    rectRegion("help", r.help, () => act.openHelp(), () => !over() && currentCard(cfg, getView()) === null),
+    // Tutorial card, on top of everything. An info card blocks the whole screen; a "do" card only covers itself.
+    rectRegion(
+      "tutorial-block",
+      { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height },
+      () => true,
+      () => {
+        const v = getView();
+        return v.help !== null || (v.tutorial !== null && tipById(v.tutorial.tip).kind === "info");
+      },
+    ),
+    // A "do" card covers only itself, so the field below stays tappable.
+    {
+      id: "tutorial-card",
+      contains: (p) => {
+        const c = currentCard(cfg, getView())?.card;
+        return !!c && p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h;
+      },
+      onTap: () => true,
+      enabled: () => currentCard(cfg, getView()) !== null,
+    },
+    ...(["ok", "skip", "back", "next", "close"] as const).map(
+      (id): UiRegion => ({
+        id: `tutorial-${id}`,
+        contains: (p) => {
+          const b = currentCard(cfg, getView())?.buttons.find((x) => x.id === id);
+          return !!b && p.x >= b.rect.x && p.x <= b.rect.x + b.rect.w && p.y >= b.rect.y && p.y <= b.rect.y + b.rect.h;
+        },
+        onTap: () => {
+          const b = currentCard(cfg, getView())?.buttons.find((x) => x.id === id);
+          if (b?.enabled) act.tutorial(id);
+          return true;
+        },
+        enabled: () => !!currentCard(cfg, getView())?.buttons.some((x) => x.id === id),
+      }),
+    ),
   ];
 }
 
@@ -743,7 +796,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   if (view.salvage > 0) {
     ctx.fillStyle = C.coin;
     ctx.font = "700 17px system-ui, sans-serif";
-    ctx.fillText(`Salvage ${view.salvage}`, 20, 60);
+    ctx.fillText(`Salvage ${view.salvage} (kept)`, 20, 60);
   }
   ctx.textAlign = "center";
   let status = "";
@@ -890,6 +943,94 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     );
     button(ctx, r.restart, "Play again");
   }
+
+  const card = currentCard(cfg, view);
+  if (!card && s.phase !== "lost") {
+    // "How to play" button, under the rings toggle.
+    ctx.fillStyle = C.hudBg;
+    roundRect(ctx, r.help.x, r.help.y, r.help.w, r.help.h, 8);
+    ctx.fill();
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = C.text;
+    ctx.font = "800 26px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("?", r.help.x + r.help.w / 2, r.help.y + r.help.h / 2 + 1);
+  }
+  if (card) drawTutorialCard(ctx, cfg, s, view, card);
+}
+
+/** Where a tip points, in world units. */
+function highlightRect(cfg: GameConfig, s: GameState, h: TipHighlight): { x: number; y: number; w: number; h: number } | null {
+  const r = buttonRects(cfg);
+  switch (h) {
+    case "supplies":
+      return { x: 8, y: 6, w: 250, h: 66 };
+    case "salvage":
+      return { x: 8, y: 44, w: 230, h: 32 };
+    case "start":
+      return r.startNow;
+    case "meter":
+      return r.meter;
+    case "boosts": {
+      const a = r.boosts.overdrive;
+      const b = r.boosts.shield;
+      return { x: a.x, y: a.y, w: b.x + b.w - a.x, h: b.y + b.h - a.y };
+    }
+    case "base": {
+      const sh = s.stronghold;
+      return { x: sh.x - sh.halfSize - 10, y: sh.y - sh.halfSize - 10, w: sh.halfSize * 2 + 20, h: sh.halfSize * 2 + 20 };
+    }
+    case "pickup": {
+      const p = s.pickups[0];
+      return p ? { x: p.x - 36, y: p.y - 36, w: 72, h: 72 } : null;
+    }
+  }
+}
+
+/** A tutorial card, with the screen dimmed behind info cards and a pulsing ring round whatever the tip points at. */
+function drawTutorialCard(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, view: ViewState, card: CardLayout): void {
+  const W = cfg.world.width;
+  const H = cfg.world.height;
+  const tip = view.help !== null ? null : view.tutorial ? tipById(view.tutorial.tip) : null;
+  const blocking = view.help !== null || tip?.kind === "info";
+  if (blocking) {
+    ctx.fillStyle = "rgba(6,7,6,0.55)";
+    ctx.fillRect(0, 0, W, H);
+  }
+  const hl = tip?.highlight ? highlightRect(cfg, s, tip.highlight) : null;
+  if (hl) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 160);
+    ctx.strokeStyle = `rgba(233,194,74,${(0.6 + 0.4 * pulse).toFixed(3)})`;
+    ctx.lineWidth = 5;
+    roundRect(ctx, hl.x - 6 - pulse * 4, hl.y - 6 - pulse * 4, hl.w + 12 + pulse * 8, hl.h + 12 + pulse * 8, 14);
+    ctx.stroke();
+  }
+  const c = card.card;
+  ctx.fillStyle = "rgba(20,22,20,0.97)";
+  roundRect(ctx, c.x, c.y, c.w, c.h, 16);
+  ctx.fill();
+  ctx.strokeStyle = C.coin;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.coin;
+  ctx.font = "800 32px system-ui, sans-serif";
+  ctx.fillText(card.title, c.x + 28, c.y + 50);
+  if (card.counter) {
+    ctx.textAlign = "right";
+    ctx.fillStyle = C.quiet;
+    ctx.font = "700 20px system-ui, sans-serif";
+    ctx.fillText(card.counter, c.x + c.w - 28, c.y + 50);
+    ctx.textAlign = "left";
+  }
+  ctx.fillStyle = C.text;
+  ctx.font = "500 25px system-ui, sans-serif";
+  card.lines.forEach((line, i) => ctx.fillText(line, c.x + 28, c.y + 104 + i * 34));
+  for (const b of card.buttons) button(ctx, b.rect, b.label, !b.enabled ? "disabled" : b.primary ? "primary" : "secondary");
 }
 
 /** 0..1, how fresh the last shot is over `window` seconds (1 = just fired). */

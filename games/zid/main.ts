@@ -9,6 +9,7 @@
 
 import { bindTaps, routeTap } from "../../engine/input/input.js";
 import { bindVisibility, createLoop } from "../../engine/loop/loop.js";
+import { TIPS, dueTip, markSeen, parseProgress, skipTutorial, tipById, type TutorialProgress } from "./tutorial.js";
 import { createRenderer } from "../../engine/render/render.js";
 import { baseConfig, stressConfig } from "./config.js";
 import { forgivingTile, overlapsStronghold, tileStatus } from "./grid.js";
@@ -36,7 +37,7 @@ import {
   type ManageResult,
 } from "./sim.js";
 import { createStressRun } from "./stress.js";
-import { BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
+import { currentCard, BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
 
 const params = new URLSearchParams(location.search);
 const stress = params.has("stress");
@@ -87,7 +88,38 @@ function saveSalvage(n: number): void {
     // Storage unavailable: the stockpile just lasts for this visit.
   }
 }
-const view: ViewState = { toast: null, selected: null, recycleArmedUntil: 0, buildPage: "weapons", showRanges: savedRanges(), salvage: loadSalvage() };
+const view: ViewState = {
+  toast: null,
+  selected: null,
+  recycleArmedUntil: 0,
+  buildPage: "weapons",
+  showRanges: savedRanges(),
+  salvage: loadSalvage(),
+  tutorial: null,
+  help: null,
+};
+
+/** Tutorial progress lives in the browser too, so the guided start runs once per player. */
+function loadProgress(): TutorialProgress {
+  try {
+    return parseProgress(localStorage.getItem("zid.tutorial"));
+  } catch {
+    return parseProgress(null);
+  }
+}
+let progress: TutorialProgress = loadProgress();
+function saveProgress(): void {
+  try {
+    localStorage.setItem("zid.tutorial", JSON.stringify(progress));
+  } catch {
+    // Storage unavailable: tips may show again next visit.
+  }
+}
+function finishTip(): void {
+  if (view.tutorial) progress = markSeen(progress, view.tutorial.tip);
+  view.tutorial = null;
+  saveProgress();
+}
 /** Salvage this run has already added to the stockpile. */
 let salvageSaved = 0;
 let showDiag = params.has("diag") || stress;
@@ -231,6 +263,20 @@ const regions = uiRegions(cfg, () => state, () => view, {
   toggleDiagnostics: () => {
     showDiag = !showDiag;
   },
+  tutorial: (button) => {
+    if (button === "skip") {
+      progress = skipTutorial(progress);
+      view.tutorial = null;
+      saveProgress();
+    } else if (button === "ok") finishTip();
+    else if (button === "close") view.help = null;
+    else if (button === "back" && view.help !== null) view.help = Math.max(0, view.help - 1);
+    else if (button === "next" && view.help !== null) view.help = Math.min(TIPS.length - 1, view.help + 1);
+  },
+  openHelp: () => {
+    view.selected = null;
+    view.help = 0;
+  },
 });
 
 bindTaps(canvas, renderer.toWorld, (p) => {
@@ -277,6 +323,19 @@ bindTaps(canvas, renderer.toWorld, (p) => {
 const loop = createLoop({
   stepHz: 30,
   update: (dt) => {
+    // Tutorial: a "do" step finishes when the player has done it; otherwise pick up any tip that is due.
+    if (!stress) {
+      if (view.tutorial) {
+        const tip = tipById(view.tutorial.tip);
+        if (tip.kind === "do" && tip.done?.(state)) finishTip();
+      }
+      if (!view.tutorial) {
+        const due = dueTip(progress, state, view.salvage);
+        if (due) view.tutorial = { tip: due, guided: !!tipById(due).guided };
+      }
+    }
+    // The game waits while a tutorial card or the reference is open.
+    if (view.tutorial || view.help !== null) return;
     step(state, cfg, dt);
     // Bank Salvage the moment a haul is unloaded, so it is safe whatever happens next.
     if (!stress && state.salvageBanked > salvageSaved) {
@@ -320,6 +379,9 @@ loop.start();
 (window as unknown as { __zid: unknown }).__zid = {
   get state() {
     return state;
+  },
+  get card() {
+    return currentCard(cfg, view);
   },
   loop,
   diagTimer,

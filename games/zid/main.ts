@@ -38,6 +38,8 @@ import {
   type ManageResult,
 } from "./sim.js";
 import { createStressRun } from "./stress.js";
+import { createAudio } from "../../engine/audio/audio.js";
+import { MUSIC, SOUNDS, musicIntensity, soundEvents, soundSnapshot, weaponSounds, type SoundSnapshot } from "./sounds.js";
 import { currentCard, BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
 
 const params = new URLSearchParams(location.search);
@@ -66,6 +68,13 @@ function loadSurvivors(): string[] {
 const unlockedSurvivors: string[] = loadSurvivors();
 let state: GameState = newRun();
 // The build menu remembers its last page, so placing several traps in a row is quick.
+function savedSound(): boolean {
+  try {
+    return localStorage.getItem("zid.sound") !== "off";
+  } catch {
+    return true;
+  }
+}
 function savedRanges(): boolean {
   try {
     return localStorage.getItem("zid.ranges") !== "off";
@@ -89,12 +98,29 @@ function saveSalvage(n: number): void {
     // Storage unavailable: the stockpile just lasts for this visit.
   }
 }
+const audio = createAudio(SOUNDS, MUSIC);
+audio.setMuted(!savedSound());
+let heard: SoundSnapshot | null = null;
+/** Play what changed since the last step, and steer the backing track. */
+function playSounds(): void {
+  if (stress) return;
+  const now = soundSnapshot(state);
+  if (heard) {
+    const kinds = new Map(state.structures.map((st) => [st.id, st.kind]));
+    for (const n of soundEvents(heard, now)) audio.play(n);
+    for (const n of weaponSounds(heard, now, (id) => kinds.get(id))) audio.play(n);
+  }
+  heard = now;
+  audio.setIntensity(musicIntensity(state));
+}
+
 const view: ViewState = {
   toast: null,
   selected: null,
   recycleArmedUntil: 0,
   buildPage: "weapons",
   showRanges: savedRanges(),
+  soundOn: savedSound(),
   salvage: loadSalvage(),
   tutorial: null,
   help: null,
@@ -257,6 +283,15 @@ const regions = uiRegions(cfg, () => state, () => view, {
     view.selected = null;
     view.recycleArmedUntil = 0;
   },
+  toggleSound: () => {
+    view.soundOn = !view.soundOn;
+    audio.setMuted(!view.soundOn);
+    try {
+      localStorage.setItem("zid.sound", view.soundOn ? "on" : "off");
+    } catch {
+      // Storage unavailable: the choice just lasts for this visit.
+    }
+  },
   toggleRanges: () => {
     view.showRanges = !view.showRanges;
     try {
@@ -285,6 +320,8 @@ const regions = uiRegions(cfg, () => state, () => view, {
 });
 
 bindTaps(canvas, renderer.toWorld, (p) => {
+  // Browsers only allow sound after a tap.
+  audio.unlock();
   routeTap(p, regions, (wp) => {
     // World tap: choose a tile. Building happens only after "Build" is pressed.
     // Forgiving: a tap just outside a usable tile still picks it.
@@ -294,6 +331,7 @@ bindTaps(canvas, renderer.toWorld, (p) => {
     const pickup = pickupAt(state, cfg, wp.x, wp.y);
     if (pickup) {
       const got = collectPickup(state, cfg, pickup.id);
+      if (got.ok) audio.play("coin");
       if (got.ok && got.kind === "health") toast(`Stronghold +${got.amount} health`);
       return;
     }
@@ -342,6 +380,7 @@ const loop = createLoop({
     // The game waits while a tutorial card or the reference is open.
     if (view.tutorial || view.help !== null) return;
     step(state, cfg, dt);
+    playSounds();
     // Bank Salvage the moment a haul is unloaded, so it is safe whatever happens next.
     if (!stress && state.salvageBanked > salvageSaved) {
       view.salvage += state.salvageBanked - salvageSaved;
@@ -377,7 +416,7 @@ function updateDiagnostics(): void {
 diagTimer = window.setInterval(updateDiagnostics, 250);
 
 window.addEventListener("resize", () => renderer.resize());
-bindVisibility(loop, document);
+bindVisibility(loop, document, (hidden) => audio.setPaused(hidden));
 loop.start();
 
 // Exposed for automated browser checks only; not a gameplay API.

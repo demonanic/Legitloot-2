@@ -92,6 +92,8 @@ export interface ViewState {
   buildPage: BuildPage;
   /** Draw the faint range ring around every weapon. The selected weapon's ring always shows. */
   showRanges: boolean;
+  /** Sound effects and music on. */
+  soundOn: boolean;
   /** The permanent Salvage stockpile (kept between runs), for the HUD and end screen. */
   salvage: number;
   /** The tutorial card showing, if any: a tip (guided-start step or one-time tip), or a page of the reference. */
@@ -150,6 +152,7 @@ export interface UiActions {
   openHelp(): void;
   /** Take the perk in this place of the offer. */
   pickPerk(index: number): void;
+  toggleSound(): void;
 }
 
 /** Fixed button rectangles in world units, shared by drawing and hit tests. */
@@ -181,6 +184,7 @@ export function buttonRects(cfg: GameConfig) {
     diagnostics: { x: w - 104, y: 14, w: 90, h: 50 },
     ranges: { x: w - 104, y: 82, w: 90, h: 36 },
     help: { x: w - 104, y: 126, w: 90, h: 44 },
+    sound: { x: w - 104, y: 178, w: 90, h: 36 },
   };
 }
 
@@ -221,6 +225,7 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
     slotRegion("close"),
     rectRegion("diagnostics", r.diagnostics, () => act.toggleDiagnostics()),
     rectRegion("ranges", r.ranges, () => act.toggleRanges(), () => !over()),
+    rectRegion("sound", r.sound, () => act.toggleSound(), () => !over()),
     // While the end screen is up it blocks all world taps; only its button acts.
     rectRegion("end-screen", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, over),
     rectRegion("restart", r.restart, () => act.restart(), over),
@@ -901,6 +906,14 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(view.showRanges ? "Rings on" : "Rings off", r.ranges.x + r.ranges.w / 2, r.ranges.y + r.ranges.h / 2 + 1);
+    // Sound toggle, under the ? button.
+    ctx.fillStyle = C.hudBg;
+    roundRect(ctx, r.sound.x, r.sound.y, r.sound.w, r.sound.h, 8);
+    ctx.fill();
+    ctx.strokeStyle = view.soundOn ? C.text : C.quiet;
+    ctx.stroke();
+    ctx.fillStyle = view.soundOn ? C.text : C.quiet;
+    ctx.fillText(view.soundOn ? "Sound on" : "Sound off", r.sound.x + r.sound.w / 2, r.sound.y + r.sound.h / 2 + 1);
   }
   ctx.strokeStyle = showDiag ? C.text : C.quiet;
   ctx.lineWidth = 2;

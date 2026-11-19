@@ -18,6 +18,16 @@ export interface WavePlan {
   /** Share of this wave that arrives in packs, and how many per pack. */
   packShare: number;
   packSize: number;
+  /** Bosses joining this wave (0 on ordinary waves). */
+  bosses: number;
+}
+
+/** How many bosses join wave `wave`: one every `bossEvery` waves, plus one more every `extraBossEvery` boss waves. */
+export function bossesFor(cfg: GameConfig, wave: number): number {
+  const w = cfg.waves;
+  if (w.bossEvery <= 0 || wave % w.bossEvery !== 0) return 0;
+  const nth = wave / w.bossEvery;
+  return 1 + Math.floor((nth - 1) / Math.max(1, w.extraBossEvery));
 }
 
 function share(wave: number, from: number, step: number, max: number): number {
@@ -36,7 +46,7 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
   return {
     wave,
     count: w.baseCount + w.countPerWave * (wave - 1),
-    mix: { walker: 1 - runner - brute - armored - spitter - boomer - screamer, runner, brute, armored, spitter, boomer, screamer },
+    mix: { walker: 1 - runner - brute - armored - spitter - boomer - screamer, runner, brute, armored, spitter, boomer, screamer, boss: 0 },
     // Compounding: turret firepower grows with accumulated income (roughly
     // quadratic in waves), so linear health growth is outpaced and runs never end.
     hpMultiplier: Math.pow(1 + w.hpGrowthPerWave, wave - 1),
@@ -44,6 +54,7 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
     lopsidedShare: wave >= w.lopsidedFrom ? w.lopsidedShare : 0,
     packShare: wave >= w.packFrom ? Math.min(w.packShareMax, w.packShareBase + w.packSharePerWave * (wave - w.packFrom)) : 0,
     packSize: Math.min(w.packSizeMax, Math.round(w.packSizeBase + w.packSizePerWave * Math.max(0, wave - w.packFrom))),
+    bosses: bossesFor(cfg, wave),
   };
 }
 
@@ -51,6 +62,7 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
  * A single number for how hard a wave is, used to check that difficulty rises
  * every wave without spikes: total enemy health plus weighted structural
  * threat. It is a yardstick for tests and the balance report, not a game rule.
+ * Bosses are left out: boss waves are meant to stand out.
  */
 export function waveThreat(cfg: GameConfig, wave: number): number {
   const p = wavePlan(cfg, wave);

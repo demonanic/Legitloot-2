@@ -37,6 +37,14 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Boss waves
+
+- Every fifth wave brings a **boss** partway in, from the main side if the wave has one. Two bosses from wave 20, three from wave 35.
+- Bosses are huge and tough (600 health, scaled like everyone else). Every 4 seconds near anything you built they **stomp**, hitting everything within about 1.5 tiles for 22. Below half health they turn red-hot and **charge** at 1.8× speed.
+- A red bar across the top tracks boss health during the wave. "BOSS INCOMING" flashes in the warning, and the wave preview shows a **BOSS WAVE** line.
+- A kill pays 70–100 Supplies and shows a "Boss down" banner. Bosses always make it onto the field, even when it is crowded.
+- Balance: a scripted player still falls around wave 20 (range 14–22), now usually on a boss wave.
+
 ### Wave preview
 
 - Between waves a strip under the top bar shows the next wave: how many are coming and a count for each kind, with its icon.

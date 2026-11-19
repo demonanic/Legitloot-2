@@ -989,8 +989,8 @@ export interface Blast {
   y: number;
   r: number;
   life: number;
-  /** "acid" = a boomer's green burst. */
-  kind?: "acid";
+  /** "acid" = a boomer's green burst; "stomp" = a boss's shockwave. */
+  kind?: "acid" | "stomp";
 }
 
 /** A spitter's acid glob in flight toward a structure (id) or the stronghold (-1). */
@@ -1016,6 +1016,8 @@ export interface Enemy {
   attacking: boolean;
   /** Sped up by a screamer this step, for drawing. */
   boosted?: boolean;
+  /** Boss: seconds until it can stomp again. */
+  stompCd?: number;
   /** Seconds left on fire, and the damage per second while burning. */
   burn?: number;
   burnDps?: number;
@@ -1099,6 +1101,8 @@ export interface GameState {
   spawns: Spawn[];
   /** Zombie types that have spawned at least once this run (for "new" labels). */
   seenTypes: EnemyType[];
+  /** Bosses killed this run. */
+  bossesKilled: number;
   nextSpawn: number;
   nextEnemyId: number;
   kills: number;
@@ -1182,6 +1186,7 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     lastStandUsed: false,
     spawns: [],
     seenTypes: [],
+    bossesKilled: 0,
     nextSpawn: 0,
     nextEnemyId: 1,
     kills: 0,
@@ -1243,6 +1248,13 @@ function rollWave(s: GameState, cfg: GameConfig): void {
     const p = edgePoint(s, cfg, edge, cfg.enemies[type].radius);
     const hp = Math.round(cfg.enemies[type].maxHp * plan.hpMultiplier);
     s.spawns.push({ at: Math.max(0, i * gap + jitter), type, hp, x: p.x, y: p.y });
+  }
+  // Bosses lumber in partway through, from the main side if there is one.
+  for (let k = 0; k < plan.bosses; k++) {
+    const edge = main ?? edges[Math.floor(nextRandom(s) * edges.length)] ?? "north";
+    const p = edgePoint(s, cfg, edge, cfg.enemies.boss.radius);
+    const hp = Math.round(cfg.enemies.boss.maxHp * plan.hpMultiplier);
+    s.spawns.push({ at: plan.spawnSeconds * cfg.waves.bossAt + k * 6, type: "boss", hp, x: p.x, y: p.y });
   }
   s.spawns.sort((a, b) => a.at - b.at);
 }
@@ -1861,6 +1873,10 @@ export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: num
     s.currency += drop;
     s.earned += drop;
     if (drop > 0 && s.popups.length < 80) s.popups.push({ x: e.x, y: e.y, amount: drop, life: POPUP_SECONDS });
+    if (e.type === "boss") {
+      s.bossesKilled++;
+      s.notices.push({ text: `Boss down · +${drop} ${cfg.currencyLabel}`, life: 4 });
+    }
     return true;
   }
   return false;
@@ -2080,7 +2096,8 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     while (s.nextSpawn < s.spawns.length && s.spawns[s.nextSpawn]!.at <= s.waveTime) {
       const sp = s.spawns[s.nextSpawn++]!;
       if (!s.seenTypes.includes(sp.type)) s.seenTypes.push(sp.type);
-      if (s.enemies.length >= cfg.limits.maxEnemies) continue;
+      // A boss always gets on the field, however crowded.
+      if (s.enemies.length >= cfg.limits.maxEnemies && sp.type !== "boss") continue;
       s.enemies.push({
         id: s.nextEnemyId++,
         type: sp.type,
@@ -2238,6 +2255,24 @@ function spitterAct(s: GameState, e: Enemy, sp: { range: number; damage: number;
   return true;
 }
 
+/** Boss stomp: on cooldown, a shockwave hits everything built, the stronghold and survivors within reach. */
+function bossStomp(s: GameState, cfg: GameConfig, e: Enemy, st: { radius: number; damage: number; cooldown: number }, shGap: number, dt: number): void {
+  e.stompCd = (e.stompCd ?? st.cooldown / 2) - dt;
+  if (e.stompCd > 0) return;
+  const near = (x: number, y: number) => Math.hypot(x - e.x, y - e.y) <= st.radius;
+  const hitsBase = shGap <= st.radius - cfg.enemies[e.type].radius;
+  const targets = s.structures.filter((x) => !x.destroyed && near(x.x, x.y));
+  if (targets.length === 0 && !hitsBase) return;
+  e.stompCd = st.cooldown;
+  s.blasts.push({ x: e.x, y: e.y, r: st.radius, life: BLAST_SECONDS, kind: "stomp" });
+  for (const x of targets) damageStructure(s, x, st.damage);
+  if (hitsBase && s.boost?.kind !== "shield") {
+    s.stronghold.hp -= st.damage;
+    s.damageTaken += st.damage;
+  }
+  for (const v of s.survivors) if (!v.downed && near(v.x, v.y)) v.hp -= st.damage;
+}
+
 /** Acid globs land on what they were aimed at (if it is still standing). */
 function stepSpits(s: GameState, dt: number): void {
   if (s.spits.length === 0) return;
@@ -2269,9 +2304,11 @@ function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
       const a = cfg.enemies[sc.type].aura!;
       if (sc !== e && Math.hypot(sc.x - e.x, sc.y - e.y) <= a.radius) boost = Math.max(boost, a.speedBoost);
     }
-    const w = boost > 0 ? { ...base, speed: base.speed * (1 + boost) } : base;
+    const enraged = base.enrage && e.hp < e.maxHp * base.enrage.below ? base.enrage.speedFactor : 1;
+    const w = boost > 0 || enraged > 1 ? { ...base, speed: base.speed * (1 + boost) * enraged } : base;
     e.boosted = boost > 0;
     const shGap = distanceToStronghold(s, e.x, e.y) - w.radius;
+    if (w.stomp) bossStomp(s, cfg, e, w.stomp, shGap, dt);
     // A boomer explodes on reaching anything solid.
     if (w.blast && boomerTouching(s, cfg, e, shGap)) {
       boomerExplode(s, cfg, e);

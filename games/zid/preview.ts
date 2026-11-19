@@ -23,6 +23,8 @@ export interface WavePreview {
   sides: SideCount[];
   /** The side sending at least half the wave, if any. */
   mainSide: Edge | null;
+  /** Bosses in this wave. */
+  bosses: number;
 }
 
 export const ZOMBIE_NAMES: Record<EnemyType, string> = {
@@ -33,6 +35,7 @@ export const ZOMBIE_NAMES: Record<EnemyType, string> = {
   spitter: "Spitter",
   boomer: "Boomer",
   screamer: "Screamer",
+  boss: "Boss",
 };
 
 /** One line on each type: what it does and how to deal with it. */
@@ -44,6 +47,7 @@ export const ZOMBIE_TIPS: Record<EnemyType, string> = {
   spitter: "Spits acid at weapons from range. Outrange it.",
   boomer: "Explodes on contact. Shoot it before it arrives.",
   screamer: "Speeds up zombies near it. Kill it first.",
+  boss: "Huge. Stomps weapons near it, charges when hurt.",
 };
 
 export function spawnEdge(cfg: GameConfig, sp: Pick<Spawn, "x" | "y">): Edge {
@@ -70,11 +74,11 @@ export function wavePreview(cfg: GameConfig, wave: number, spawns: readonly Spaw
   const types = ENEMY_TYPES.filter((t) => byType.has(t))
     .map((type) => ({ type, count: byType.get(type)! }))
     .sort((a, b) => b.count - a.count);
-  const newTypes = types.map((t) => t.type).filter((t) => t !== "walker" && !seen.includes(t));
+  const newTypes = types.map((t) => t.type).filter((t) => t !== "walker" && t !== "boss" && !seen.includes(t));
   const sides = [...bySide.entries()]
     .map(([edge, v]) => ({ edge, count: v.count, along: v.sum / v.count }))
     .sort((a, b) => b.count - a.count);
   const top = sides[0];
   const mainSide = top && spawns.length > 0 && top.count / spawns.length >= 0.5 ? top.edge : null;
-  return { wave, count: spawns.length, types, newTypes, sides, mainSide };
+  return { wave, count: spawns.length, types, newTypes, sides, mainSide, bosses: byType.get("boss") ?? 0 };
 }

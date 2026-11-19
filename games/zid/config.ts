@@ -8,8 +8,8 @@
  */
 
 export type Edge = "north" | "south" | "east" | "west";
-export type EnemyType = "walker" | "runner" | "brute" | "armored" | "spitter" | "boomer" | "screamer";
-export const ENEMY_TYPES: readonly EnemyType[] = ["walker", "runner", "brute", "armored", "spitter", "boomer", "screamer"];
+export type EnemyType = "walker" | "runner" | "brute" | "armored" | "spitter" | "boomer" | "screamer" | "boss";
+export const ENEMY_TYPES: readonly EnemyType[] = ["walker", "runner", "brute", "armored", "spitter", "boomer", "screamer", "boss"];
 
 export interface EnemyStats {
   maxHp: number;
@@ -38,6 +38,10 @@ export interface EnemyStats {
   blast?: { radius: number; damage: number; zombieShare: number };
   /** Screamer: other zombies within `radius` move `speedBoost` faster (0.4 = 40%). */
   aura?: { radius: number; speedBoost: number };
+  /** Boss: every `cooldown` seconds near anything built, hits all of it within `radius` for `damage`. */
+  stomp?: { radius: number; damage: number; cooldown: number };
+  /** Boss: below `below` of its health it charges at `speedFactor` × speed. */
+  enrage?: { below: number; speedFactor: number };
 }
 
 export interface BaseLevel {
@@ -131,6 +135,10 @@ export interface WaveRules {
   screamerFrom: number;
   screamerShareStep: number;
   screamerShareMax: number;
+  /** A boss joins every `bossEvery`-th wave, `bossAt` of the way into the spawn window; one more every `extraBossEvery` boss waves. */
+  bossEvery: number;
+  bossAt: number;
+  extraBossEvery: number;
   /** Spawn window: `spawnBaseSeconds` + `spawnSecondsPerWave` × (wave − 1), capped. */
   spawnBaseSeconds: number;
   spawnSecondsPerWave: number;
@@ -613,6 +621,7 @@ export const baseConfig: GameConfig = {
     spitter: { maxHp: 34, speed: 27, radius: 12, structureDamage: 6, attackCooldown: 1, drop: { chance: 0.7, min: 4, max: 7 }, spit: { range: 140, damage: 6, cooldown: 2.2, speed: 260 } },
     boomer: { maxHp: 55, speed: 29, radius: 15, structureDamage: 0, attackCooldown: 1, drop: { chance: 0.8, min: 5, max: 8 }, blast: { radius: 75, damage: 70, zombieShare: 1.5 } },
     screamer: { maxHp: 45, speed: 30, radius: 12, structureDamage: 6, attackCooldown: 1, drop: { chance: 1, min: 6, max: 10 }, aura: { radius: 120, speedBoost: 0.4 } },
+    boss: { maxHp: 600, speed: 15, radius: 30, structureDamage: 30, attackCooldown: 1.5, drop: { chance: 1, min: 70, max: 100 }, stomp: { radius: 100, damage: 22, cooldown: 4 }, enrage: { below: 0.5, speedFactor: 1.8 } },
   },
   wave: { prepSeconds: 20, warningSeconds: 3, edges: ["north", "south", "east", "west"] },
   waves: {
@@ -637,6 +646,9 @@ export const baseConfig: GameConfig = {
     screamerFrom: 7,
     screamerShareStep: 0.01,
     screamerShareMax: 0.04,
+    bossEvery: 5,
+    bossAt: 0.35,
+    extraBossEvery: 3,
     spawnBaseSeconds: 36,
     spawnSecondsPerWave: 2,
     spawnMaxSeconds: 60,

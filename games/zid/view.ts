@@ -449,7 +449,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   // Ground stains where zombies died (under everything that stands).
-  for (const sp of s.splats) drawSplat(ctx, sp.x, sp.y, sp.type === "brute", cfg.enemies[sp.type].radius, sp.shape, SPLAT_SECONDS - sp.life);
+  for (const sp of s.splats) drawSplat(ctx, sp.x, sp.y, sp.type === "brute" || sp.type === "boss", cfg.enemies[sp.type].radius, sp.shape, SPLAT_SECONDS - sp.life);
 
   drawStronghold(ctx, s);
 
@@ -628,7 +628,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.arc(x, y - Math.sin(Math.PI * t) * 40, 5, 0, Math.PI * 2);
     ctx.fill();
   }
-  for (const b of s.blasts) drawBlast(ctx, b.x, b.y, b.r, BLAST_SECONDS - b.life, b.kind === "acid");
+  for (const b of s.blasts) drawBlast(ctx, b.x, b.y, b.r, BLAST_SECONDS - b.life, b.kind);
 
   // Supplies picked up from kills: a coin and "+N" floating up.
   ctx.textAlign = "center";
@@ -877,6 +877,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     );
   }
 
+  if (s.phase === "wave") drawBossBar(ctx, cfg, s);
+
   const r = buttonRects(cfg);
   if (s.phase !== "lost") {
     // Range-ring toggle, under the FPS button.
@@ -908,7 +910,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.strokeRect(8, 8, W - 16, H - 16);
     ctx.fillStyle = C.warn;
     ctx.font = "900 64px system-ui, sans-serif";
-    ctx.fillText("INCOMING", W / 2, 300);
+    ctx.fillText(s.spawns.some((x) => x.type === "boss") ? "BOSS INCOMING" : "INCOMING", W / 2, 300);
   }
 
   if (s.phase === "prep" || s.phase === "warning") drawWavePreview(ctx, cfg, s);
@@ -1275,8 +1277,24 @@ function drawMortar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState
 }
 
 /** A landed shell: flash, shockwave ring, flying debris, then smoke. */
-function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, age: number, acid = false): void {
-  if (acid) {
+function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, age: number, kind?: "acid" | "stomp"): void {
+  if (kind === "stomp") {
+    // A boss stomp: a dusty shockwave rolling out over the ground.
+    const k = Math.min(1, age / 0.5);
+    if (k < 1) {
+      ctx.strokeStyle = `rgba(200,170,120,${(0.85 * (1 - k)).toFixed(3)})`;
+      ctx.lineWidth = 10 * (1 - k) + 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r * (0.3 + 0.75 * k), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = `rgba(120,100,70,${(0.25 * (1 - k)).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, r * (0.3 + 0.75 * k), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+  if (kind === "acid") {
     // A boomer's burst: a green flash, a ring, and a spreading acid cloud.
     const k = Math.min(1, age / BLAST_SECONDS);
     ctx.fillStyle = `rgba(190,235,80,${(0.6 * (1 - k)).toFixed(3)})`;
@@ -2419,6 +2437,30 @@ function drawRailgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
 }
 
 /** One zombie, by type: each has its own shape so you can read a wave at a glance. */
+/** Boss health across the top while any boss is on the field. */
+function drawBossBar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
+  const bosses = s.enemies.filter((e) => e.type === "boss" && e.hp > 0);
+  if (bosses.length === 0) return;
+  const right = buttonRects(cfg).help.x - 8;
+  const hasMortarStrip = s.structures.some((st) => st.kind === "mortar" && !st.destroyed);
+  const y = hasMortarStrip ? 120 : 84;
+  const hp = bosses.reduce((n, e) => n + e.hp, 0);
+  const max = bosses.reduce((n, e) => n + e.maxHp, 0);
+  const enraged = bosses.some((e) => e.hp < e.maxHp * (cfg.enemies.boss.enrage?.below ?? 0));
+  ctx.save();
+  ctx.fillStyle = "rgba(16,18,16,0.9)";
+  ctx.fillRect(0, y - 4, right, 44);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = enraged ? C.warn : C.bad;
+  ctx.font = "900 20px system-ui, sans-serif";
+  const label = bosses.length > 1 ? `BOSSES ×${bosses.length}` : enraged ? "BOSS · CHARGING" : "BOSS";
+  ctx.fillText(label, 14, y + 18);
+  const bx = 14 + ctx.measureText(label).width + 14;
+  bar(ctx, bx, y + 8, right - bx - 14, 20, hp / max, enraged ? C.warn : C.bad);
+  ctx.restore();
+}
+
 /** Next wave at a glance: who is coming, what is new, and from where. */
 function drawWavePreview(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
   const W = cfg.world.width;
@@ -2448,8 +2490,23 @@ function drawWavePreview(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: Game
     ctx.font = "800 20px system-ui, sans-serif";
     ctx.fillText(`${t.count}`, cx + 31, top + stripH / 2 + 1);
   });
-  // A row for each type not met before this run, all in one text size.
   let y = top + stripH;
+  if (p.bosses > 0) {
+    const rowH = 44;
+    ctx.fillStyle = "rgba(70,22,18,0.92)";
+    ctx.fillRect(0, y, right, rowH);
+    icon("boss", 28, y + rowH / 2, 14);
+    ctx.fillStyle = C.bad;
+    ctx.font = "900 20px system-ui, sans-serif";
+    const head = p.bosses > 1 ? `BOSS WAVE ×${p.bosses}` : "BOSS WAVE";
+    ctx.fillText(head, 52, y + rowH / 2 + 1);
+    const headW = ctx.measureText(head).width;
+    ctx.fillStyle = C.text;
+    ctx.font = "600 17px system-ui, sans-serif";
+    ctx.fillText(ZOMBIE_TIPS.boss, 64 + headW, y + rowH / 2 + 1);
+    y += rowH;
+  }
+  // A row for each type not met before this run, all in one text size.
   let size = 18;
   for (const t of p.newTypes) {
     ctx.font = "900 18px system-ui, sans-serif";
@@ -2589,6 +2646,33 @@ function drawZombie(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState
       ctx.beginPath();
       ctx.ellipse(e.x, e.y + 1, r * 0.35, r * (0.25 + 0.25 * open), 0, 0, Math.PI * 2);
       ctx.fill();
+      return;
+    }
+    case "boss": {
+      // Hulking, with spikes on its back and burning eyes; red-hot when charging.
+      const enraged = e.hp < e.maxHp * (cfg.enemies.boss.enrage?.below ?? 0);
+      const spikes = 9;
+      ctx.fillStyle = "#3b2a26";
+      ctx.beginPath();
+      for (let i = 0; i <= spikes * 2; i++) {
+        const a = (i / (spikes * 2)) * Math.PI * 2 - Math.PI / 2;
+        const rr = i % 2 === 0 ? r * 1.22 : r * 0.95;
+        if (i === 0) ctx.moveTo(e.x + Math.cos(a) * rr, e.y + Math.sin(a) * rr);
+        else ctx.lineTo(e.x + Math.cos(a) * rr, e.y + Math.sin(a) * rr);
+      }
+      ctx.fill();
+      const glow = enraged ? 0.5 + 0.5 * Math.sin(s.time * 14) : 0;
+      body(enraged ? `rgb(${150 + Math.round(60 * glow)},60,50)` : "#7a4a3e", 5);
+      ctx.fillStyle = "#2a1a16";
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + r * 0.15, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = enraged ? "#ffec80" : "#ff7a3a";
+      for (const dx of [-0.32, 0.32]) {
+        ctx.beginPath();
+        ctx.arc(e.x + dx * r, e.y - r * 0.2, r * 0.14, 0, Math.PI * 2);
+        ctx.fill();
+      }
       return;
     }
     default:

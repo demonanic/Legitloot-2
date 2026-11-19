@@ -402,6 +402,8 @@ export interface GameConfig {
   waves: WaveRules;
   projectile: { radius: number; maxLifetime: number };
   limits: { maxEnemies: number; maxProjectiles: number };
+  /** Perk draft after each cleared wave: pick one of `choices`. The prep timer waits while choosing. */
+  perks: { enabled: boolean; choices: number };
   /**
    * Pickups: icons that appear inside the fence during an assault. Tap one
    * before it fades to collect it. "health" repairs the stronghold at once;
@@ -627,7 +629,7 @@ export const baseConfig: GameConfig = {
   waves: {
     baseCount: 40,
     countPerWave: 6,
-    hpGrowthPerWave: 0.22, // lowered from 0.285 after real play kept ending on wave 11; see scripts/balance.mjs
+    hpGrowthPerWave: 0.24, // 0.285 → 0.24 after real play kept ending on wave 11; briefly 0.22 before perks; see scripts/balance.mjs
     runnerFrom: 2,
     runnerShareStep: 0.05,
     runnerShareMax: 0.3,
@@ -664,6 +666,7 @@ export const baseConfig: GameConfig = {
   },
   projectile: { radius: 3, maxLifetime: 1.2 },
   limits: { maxEnemies: 260, maxProjectiles: 400 },
+  perks: { enabled: true, choices: 3 },
   pickups: { everyMin: 10, everyMax: 18, lifeSeconds: 7, tapRadius: 48, healthChance: 0.55, healShare: 0.1, suppliesMin: 12, suppliesMax: 25 },
   truck: {
     cost: 60,

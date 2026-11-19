@@ -37,6 +37,14 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Perks
+
+- After every cleared wave, **pick one of three perks**. They stack up to a cap and last the whole run. The break's countdown waits while you choose; starting the wave early skips the pick.
+- **Weapons:** Hot Barrels (every weapon fires 8% faster), Heavy Rounds (guns, Gatlings and shotguns +12% damage), Big Bang (mortar and rocket +15%), Napalm (flamer +25%), Overcharge (Tesla +25%), Capacitors (railgun charges 25% faster), Armor Piercing (bullets do 25% more to Armored).
+- **Defence and economy:** Reinforced (everything built +15% health, including what's already standing), Field Medic (stronghold heals 1.5/s in waves), Scavenger (+12% Supplies per kill), Quick Charge (meter fills 20% faster), Training (survivors +20% damage).
+- Weapon perks only show up once that weapon is unlocked, Training once you have survivors, and Armor Piercing once Armored are near. Offers use their own random stream, so they never change the waves.
+- With perks the scripted player falls around wave 23 (range 22–25). To keep that inside the target band, zombie health growth is back to 24% per wave.
+
 ### Boss waves
 
 - Every fifth wave brings a **boss** partway in, from the main side if the wave has one. Two bosses from wave 20, three from wave 35.

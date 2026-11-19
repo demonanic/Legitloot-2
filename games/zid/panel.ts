@@ -299,7 +299,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
   }
 
   if (st.turret) {
-    const stats = turretStats(cfg, st.turret, st.kind);
+    const stats = turretStats(cfg, st.turret, st.kind, s.perks);
     const up = (slot: PanelSlot, label: string, path: UpgradePathId): PanelButton => {
       const cost = nextUpgradeCost(cfg, st, path);
       const max = cfg.upgrades[path].costs.length;

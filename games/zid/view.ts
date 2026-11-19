@@ -8,6 +8,7 @@ import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
 import { panelModel, type BuildPage, type PanelAction, type PanelSlot } from "./panel.js";
 import { ZOMBIE_NAMES, ZOMBIE_TIPS, wavePreview } from "./preview.js";
+import { PERKS, perkDef, perkLevel, type PerkId } from "./perks.js";
 import { TIPS, cardLayout, tipById, type CardButtonId, type CardLayout, type TipHighlight, type TipId } from "./tutorial.js";
 import {
   BLAST_SECONDS,
@@ -147,6 +148,8 @@ export interface UiActions {
   tutorial(button: CardButtonId): void;
   /** Open the "How to play" reference. */
   openHelp(): void;
+  /** Take the perk in this place of the offer. */
+  pickPerk(index: number): void;
 }
 
 /** Fixed button rectangles in world units, shared by drawing and hit tests. */
@@ -221,7 +224,12 @@ export function uiRegions(cfg: GameConfig, getState: () => GameState, getView: (
     // While the end screen is up it blocks all world taps; only its button acts.
     rectRegion("end-screen", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, over),
     rectRegion("restart", r.restart, () => act.restart(), over),
-    rectRegion("help", r.help, () => act.openHelp(), () => !over() && currentCard(cfg, getView()) === null),
+    rectRegion("help", r.help, () => act.openHelp(), () => !over() && currentCard(cfg, getView()) === null && !getState().perkOffer),
+    // The perk draft blocks everything else until a card is picked.
+    rectRegion("perk-block", { x: 0, y: 0, w: cfg.world.width, h: cfg.world.height }, () => true, () => offerOpen(getState())),
+    ...[0, 1, 2].map((i) =>
+      rectRegion(`perk-${i}`, perkCardRect(cfg, i), () => act.pickPerk(i), () => offerOpen(getState()) && (getState().perkOffer?.length ?? 0) > i),
+    ),
     // Tutorial card, on top of everything. An info card blocks the whole screen; a "do" card only covers itself.
     rectRegion(
       "tutorial-block",
@@ -1001,8 +1009,10 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     button(ctx, r.restart, "Play again");
   }
 
+  drawPerkOffer(ctx, cfg, s);
+
   const card = currentCard(cfg, view);
-  if (!card && s.phase !== "lost") {
+  if (!card && s.phase !== "lost" && !offerOpen(s)) {
     // "How to play" button, under the rings toggle.
     ctx.fillStyle = C.hudBg;
     roundRect(ctx, r.help.x, r.help.y, r.help.w, r.help.h, 8);
@@ -2437,6 +2447,90 @@ function drawRailgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
 }
 
 /** One zombie, by type: each has its own shape so you can read a wave at a glance. */
+function offerOpen(s: GameState): boolean {
+  return s.phase === "prep" && s.perkOffer !== null;
+}
+
+/** Where the i-th perk card sits. */
+export function perkCardRect(cfg: GameConfig, i: number): { x: number; y: number; w: number; h: number } {
+  return { x: 40, y: 360 + i * 168, w: cfg.world.width - 80, h: 148 };
+}
+
+const PERK_GROUP: Record<PerkId, string> = {
+  "hot-barrels": "#e2884a",
+  "heavy-rounds": "#e2884a",
+  "big-bang": "#e2884a",
+  napalm: "#e2884a",
+  overcharge: "#e2884a",
+  capacitors: "#e2884a",
+  "armor-piercing": "#e2884a",
+  reinforced: "#6fa8dc",
+  "field-medic": "#7fc47a",
+  scavenger: "#e9c24a",
+  "quick-charge": "#e9c24a",
+  "survivor-training": "#c49ae0",
+};
+
+/** The perk draft: dim the field, three cards to pick from, and what you already have. */
+function drawPerkOffer(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
+  const offer = s.perkOffer;
+  if (!offer || s.phase !== "prep") return;
+  const W = cfg.world.width;
+  ctx.save();
+  ctx.fillStyle = "rgba(8,9,8,0.84)";
+  ctx.fillRect(0, 0, W, cfg.world.height);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = C.coin;
+  ctx.font = "900 26px system-ui, sans-serif";
+  ctx.fillText(`WAVE ${s.wave - 1} CLEARED`, W / 2, 250);
+  ctx.fillStyle = C.text;
+  ctx.font = "900 44px system-ui, sans-serif";
+  ctx.fillText("Pick a perk", W / 2, 302);
+  offer.forEach((id, i) => {
+    const d = perkDef(id);
+    const r = perkCardRect(cfg, i);
+    const lvl = perkLevel(s.perks, id);
+    ctx.fillStyle = "#23261f";
+    roundRect(ctx, r.x, r.y, r.w, r.h, 14);
+    ctx.fill();
+    ctx.strokeStyle = PERK_GROUP[id];
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.fillStyle = PERK_GROUP[id];
+    roundRect(ctx, r.x, r.y, 14, r.h, 7);
+    ctx.fill();
+    ctx.textAlign = "left";
+    ctx.fillStyle = C.text;
+    ctx.font = "900 32px system-ui, sans-serif";
+    ctx.fillText(d.name, r.x + 36, r.y + 46);
+    ctx.textAlign = "right";
+    ctx.fillStyle = lvl > 0 ? C.coin : C.quiet;
+    ctx.font = "800 20px system-ui, sans-serif";
+    ctx.fillText(lvl > 0 ? `Level ${lvl} → ${lvl + 1} of ${d.max}` : d.max > 1 ? `New · up to ${d.max}` : "New", r.x + r.w - 22, r.y + 46);
+    ctx.textAlign = "left";
+    ctx.fillStyle = C.text;
+    let size = 24;
+    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    while (size > 16 && ctx.measureText(d.text).width > r.w - 60) ctx.font = `600 ${--size}px system-ui, sans-serif`;
+    ctx.fillText(d.text, r.x + 36, r.y + 102);
+  });
+  // What has been taken so far.
+  const taken = PERKS.filter((p) => perkLevel(s.perks, p.id) > 0).map((p) => `${p.name}${p.max > 1 ? ` ${perkLevel(s.perks, p.id)}` : ""}`);
+  ctx.textAlign = "center";
+  ctx.fillStyle = C.quiet;
+  ctx.font = "600 20px system-ui, sans-serif";
+  const y0 = perkCardRect(cfg, 2).y + 148 + 44;
+  if (taken.length > 0) {
+    const line = "Your perks: " + taken.join(" · ");
+    for (let size = 20; size > 14 && ctx.measureText(line).width > W - 40; size--) ctx.font = `600 ${size - 1}px system-ui, sans-serif`;
+    ctx.fillText(ctx.measureText(line).width > W - 40 ? `Your perks: ${taken.length} taken` : line, W / 2, y0);
+    ctx.font = "600 20px system-ui, sans-serif";
+  }
+  ctx.fillText("The break waits while you choose", W / 2, y0 + (taken.length > 0 ? 36 : 0));
+  ctx.restore();
+}
+
 /** Boss health across the top while any boss is on the field. */
 function drawBossBar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
   const bosses = s.enemies.filter((e) => e.type === "boss" && e.hp > 0);

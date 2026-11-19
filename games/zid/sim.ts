@@ -9,6 +9,7 @@ import { ENEMY_TYPES, type Edge, type EnemyType, type GameConfig, type SurvivorD
 import { buildableTiles, gridSize, overlapsStronghold, tileCenter, tileOrigin, tileStatus, type TileStatus } from "./grid.js";
 import { clampTile, nextTile, pathField } from "./path.js";
 import { wavePlan } from "./waves.js";
+import { drawPerks, eligiblePerks, perkBonus, perkLevel, weaponPerkScale, type PerkId, type Perks } from "./perks.js";
 
 /** The run is endless: prep -> warning -> wave repeats until the stronghold falls ("lost"). */
 export type Phase = "prep" | "warning" | "wave" | "lost";
@@ -210,7 +211,12 @@ export const SURVIVOR_MAX_LEVEL = 5;
 /** Bullet damage after the base-level bonus and, when the survivor is given, their own level and weapon. */
 export function survivorDamage(s: GameState, cfg: GameConfig, def: SurvivorDef, v?: Survivor): number {
   const level = v?.level ?? 1;
-  return survivorWeapon(def, level).damage * (1 + cfg.survivors.damagePerBaseLevel * s.stronghold.level) * (1 + cfg.survivors.damagePerLevel * (level - 1));
+  return (
+    survivorWeapon(def, level).damage *
+    (1 + cfg.survivors.damagePerBaseLevel * s.stronghold.level) *
+    (1 + cfg.survivors.damagePerLevel * (level - 1)) *
+    (1 + perkBonus(s.perks, "survivor-training"))
+  );
 }
 
 /** A kill by a survivor counts toward their next level; levelling adds health and may bring a new weapon. */
@@ -1103,6 +1109,12 @@ export interface GameState {
   seenTypes: EnemyType[];
   /** Bosses killed this run. */
   bossesKilled: number;
+  /** Perk levels taken this run. */
+  perks: Perks;
+  /** Perks on offer after a cleared wave; the prep timer waits until one is picked. */
+  perkOffer: PerkId[] | null;
+  /** Separate random stream for perk draws, so offers never change wave rolls. */
+  perkRng: number;
   nextSpawn: number;
   nextEnemyId: number;
   kills: number;
@@ -1187,6 +1199,9 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     spawns: [],
     seenTypes: [],
     bossesKilled: 0,
+    perks: {},
+    perkOffer: null,
+    perkRng: (seed ^ 0x2f6b9e) | 0,
     nextSpawn: 0,
     nextEnemyId: 1,
     kills: 0,
@@ -1434,7 +1449,7 @@ export function buildStructure(s: GameState, cfg: GameConfig, kind: StructureKin
   const cost = buildCost(cfg, kind);
   s.currency -= cost;
   const c = tileCenter(cfg, col, row);
-  const maxHp = kindMaxHp(cfg, kind);
+  const maxHp = kind === "mine" || kind === "tripwire" ? 1 : Math.round(kindMaxHp(cfg, kind) * (1 + perkBonus(s.perks, "reinforced")));
   // Trip wires stretch across the line from the tile to the stronghold.
   const facing = Math.atan2(s.stronghold.y - c.y, s.stronghold.x - c.x) + Math.PI / 2;
   const structure: Structure = {
@@ -1564,7 +1579,7 @@ export function reinforceBarricade(s: GameState, cfg: GameConfig, id: number): M
   s.currency -= cost;
   st.spent += cost;
   st.reinforce++;
-  const newMax = Math.round(cfg.barricade.maxHp * (1 + cfg.barricade.reinforce.perLevel * st.reinforce));
+  const newMax = Math.round(cfg.barricade.maxHp * (1 + cfg.barricade.reinforce.perLevel * st.reinforce) * (1 + perkBonus(s.perks, "reinforced")));
   st.hp += newMax - st.maxHp;
   st.maxHp = newMax;
   s.layoutVersion++;
@@ -1655,7 +1670,7 @@ export function damageStructure(s: GameState, st: Structure, amount: number): bo
 }
 
 /** Effective shots per second and damage per shot for a turret or mortar, after upgrades. */
-export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "machine-gun"): { fireRate: number; damage: number } {
+export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "machine-gun", perks?: Perks): { fireRate: number; damage: number } {
   const g = cfg.gatling;
   let rate = cfg.turret.fireRate;
   let dmg = cfg.turret.damage;
@@ -1666,9 +1681,10 @@ export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "m
   else if (kind === "flamer") [rate, dmg] = [cfg.flamer.fireRate, cfg.flamer.damage];
   else if (kind === "tesla") [rate, dmg] = [cfg.tesla.fireRate, cfg.tesla.damage];
   else if (kind === "railgun") [rate, dmg] = [cfg.railgun.fireRate, cfg.railgun.damage];
+  const p = weaponPerkScale(perks, kind);
   return {
-    fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed),
-    damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength),
+    fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed) * p.rate,
+    damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength) * p.damage,
   };
 }
 
@@ -1772,8 +1788,48 @@ export function recycleStructure(s: GameState, cfg: GameConfig, id: number): Man
 }
 
 /** Early launch: skip the rest of the preparation countdown and start the assault immediately. */
+function perkRandom(s: GameState): number {
+  s.perkRng = (s.perkRng + 0x6d2b79f5) | 0;
+  let t = s.perkRng;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+/** After a cleared wave: draw the perk choices (none if every perk is maxed or irrelevant). */
+function offerPerks(s: GameState, cfg: GameConfig): void {
+  if (!cfg.perks.enabled) return;
+  const pool = eligiblePerks(s.perks, (k) => isUnlocked(s, cfg, k), {
+    survivors: s.survivors.length > 0,
+    armoredSoon: s.wave >= cfg.waves.armoredFrom - 1,
+  });
+  const offer = drawPerks(pool, cfg.perks.choices, () => perkRandom(s));
+  s.perkOffer = offer.length > 0 ? offer : null;
+}
+
+export type PerkRejection = "no-offer" | "not-offered";
+
+/** Take one of the offered perks. Reinforced also lifts everything already built. */
+export function choosePerk(s: GameState, id: PerkId): { ok: true } | { ok: false; reason: PerkRejection } {
+  if (!s.perkOffer) return { ok: false, reason: "no-offer" };
+  if (!s.perkOffer.includes(id)) return { ok: false, reason: "not-offered" };
+  const before = 1 + perkBonus(s.perks, "reinforced");
+  s.perks[id] = perkLevel(s.perks, id) + 1;
+  s.perkOffer = null;
+  if (id === "reinforced") {
+    const k = (1 + perkBonus(s.perks, "reinforced")) / before;
+    for (const st of s.structures) {
+      if (st.kind === "mine" || st.kind === "tripwire") continue;
+      st.maxHp = Math.round(st.maxHp * k);
+      if (!st.destroyed) st.hp = Math.min(st.maxHp, Math.round(st.hp * k));
+    }
+  }
+  return { ok: true };
+}
+
 export function startWaveNow(s: GameState, _cfg: GameConfig): void {
   if (s.phase !== "prep") return;
+  s.perkOffer = null;
   s.phase = "wave";
   s.phaseTimer = 0;
 }
@@ -1866,8 +1922,8 @@ export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: num
     }
     if (by) creditKill(s, cfg, by);
     const bounty = s.boost?.kind === "bounty" ? cfg.boost.bounty.drops : 1;
-    const drop = rollDrop(s, cfg, e.type) * bounty;
-    if (!s.boost) s.charge = Math.min(1, s.charge + 1 / cfg.boost.killsToFill);
+    const drop = Math.round(rollDrop(s, cfg, e.type) * bounty * (1 + perkBonus(s.perks, "scavenger")));
+    if (!s.boost) s.charge = Math.min(1, s.charge + (1 + perkBonus(s.perks, "quick-charge")) / cfg.boost.killsToFill);
     if (s.splats.length >= 140) s.splats.shift();
     s.splats.push({ x: e.x, y: e.y, type: e.type, shape: e.id, life: SPLAT_SECONDS });
     s.currency += drop;
@@ -2079,7 +2135,9 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   }
 
   if (s.phase === "prep" || s.phase === "warning") {
-    s.phaseTimer -= dt;
+    // The break waits while a perk is being chosen.
+    if (!(s.phase === "prep" && s.perkOffer)) s.phaseTimer -= dt;
+    if (s.phase === "warning") s.perkOffer = null;
     if (s.phaseTimer <= 0) {
       if (s.phase === "prep" && cfg.wave.warningSeconds > 0) {
         s.phase = "warning";
@@ -2113,6 +2171,9 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   }
 
   stepPickups(s, cfg, dt);
+  // Field Medic: the stronghold patches itself up during assaults.
+  const heal = perkBonus(s.perks, "field-medic");
+  if (heal > 0 && s.phase === "wave" && s.stronghold.hp > 0) s.stronghold.hp = Math.min(s.stronghold.maxHp, s.stronghold.hp + heal * dt);
   if (s.boost) {
     if (s.boost.kind === "shield") {
       s.stronghold.hp = Math.min(s.stronghold.maxHp, s.stronghold.hp + s.stronghold.maxHp * cfg.boost.shield.regenPerSecond * dt);
@@ -2153,6 +2214,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.wave++;
     s.rockets = [];
     rollWave(s, cfg);
+    offerPerks(s, cfg);
     if (cfg.wave.prepSeconds > 0) {
       s.phase = "prep";
       s.phaseTimer = cfg.wave.prepSeconds;
@@ -2433,7 +2495,7 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       tur.spin = target ? Math.min(1, tur.spin + dt / cfg.gatling.spinUpSeconds) : Math.max(0, tur.spin - dt / cfg.gatling.spinDownSeconds);
       tur.barrel = (tur.barrel + dt * (2 + 28 * tur.spin)) % (Math.PI * 2);
     }
-    const stats = turretStats(cfg, tur, slot.kind);
+    const stats = turretStats(cfg, tur, slot.kind, s.perks);
     const interval = 1 / stats.fireRate;
     if (!target) {
       if (tur.cooldown < 0) tur.cooldown = 0;
@@ -2468,7 +2530,7 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
 /** Shotgun: a fan of short-lived pellets at the nearest threat, barrels firing in turn. */
 function stepShotgun(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const g = cfg.shotgun;
-  const stats = turretStats(cfg, tur, "shotgun");
+  const stats = turretStats(cfg, tur, "shotgun", s.perks);
   tur.cooldown -= dt;
   const target = pickTarget(s, cfg, slot, g.range);
   tur.targetId = target ? target.id : null;
@@ -2541,7 +2603,7 @@ function pickNearest(s: GameState, x: number, y: number, range: number, skip: Se
 /** Tesla coil: each zap strikes a chain of zombies at once, weaker with every jump. */
 function stepTesla(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const t = cfg.tesla;
-  const stats = turretStats(cfg, tur, "tesla");
+  const stats = turretStats(cfg, tur, "tesla", s.perks);
   tur.cooldown -= dt;
   if (tur.cooldown > 0) return;
   const chain = teslaChain(s, cfg, slot);
@@ -2619,7 +2681,7 @@ export function railgunAim(s: GameState, cfg: GameConfig, slot: Structure): numb
 /** Railgun: a long charge, then one beam through everything on the line. */
 function stepRailgun(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const r = cfg.railgun;
-  const stats = turretStats(cfg, tur, "railgun");
+  const stats = turretStats(cfg, tur, "railgun", s.perks);
   tur.cooldown -= dt;
   // Between shots it tracks the nearest zombie in range, so the barrel turns smoothly.
   const near = pickNearest(s, slot.x, slot.y, r.range, null);
@@ -2663,7 +2725,7 @@ function inCone(slot: Structure, aim: number, range: number, halfAngle: number, 
 /** Flamethrower: each tick burns everything in the cone and sets it alight. */
 function stepFlamer(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const f = cfg.flamer;
-  const stats = turretStats(cfg, tur, "flamer");
+  const stats = turretStats(cfg, tur, "flamer", s.perks);
   tur.cooldown -= dt;
   const target = pickTarget(s, cfg, slot, f.range);
   tur.targetId = target ? target.id : null;
@@ -2704,7 +2766,7 @@ function stepBurns(s: GameState, cfg: GameConfig, dt: number): void {
 
 function stepRocketLauncher(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const r = cfg.rocket;
-  const stats = turretStats(cfg, tur, "rocket");
+  const stats = turretStats(cfg, tur, "rocket", s.perks);
   tur.cooldown -= dt;
   // Rockets go for the toughest zombie in range (ties: closest to the stronghold, then id).
   let target: Enemy | null = null;
@@ -2864,7 +2926,7 @@ function stepTraps(s: GameState, cfg: GameConfig): void {
 
 function stepMortar(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
   const m = cfg.mortar;
-  const stats = turretStats(cfg, tur, "mortar");
+  const stats = turretStats(cfg, tur, "mortar", s.perks);
   tur.cooldown -= dt;
   const target = mortarTarget(s, cfg, slot);
   tur.targetId = null;
@@ -2951,7 +3013,9 @@ function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {
       const hitR = cfg.enemies[e.type].radius + cfg.projectile.radius;
       if (dx * dx + dy * dy <= hitR * hitR) {
         // Armour turns most of a bullet aside.
-        damageEnemy(s, cfg, e, p.damage * (cfg.enemies[e.type].bulletFactor ?? 1), p.by);
+        const bf = cfg.enemies[e.type].bulletFactor;
+        const factor = bf === undefined ? 1 : Math.min(1, bf * (1 + perkBonus(s.perks, "armor-piercing")));
+        damageEnemy(s, cfg, e, p.damage * factor, p.by);
         hit = true;
         break;
       }

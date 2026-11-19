@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { baseConfig } from "../games/zid/config.js";
-import { buildStructure, createState, startWaveNow, step } from "../games/zid/sim.js";
+import { buildStructure, choosePerk, createState, startWaveNow, step } from "../games/zid/sim.js";
 import {
   CARD_CHARS,
   NEW_PROGRESS,
@@ -71,6 +71,10 @@ test("one-time tips: each appears when its moment comes, and never again once se
   s.nextSpawn = s.spawns.length;
   step(s, cfg, 1 / 30);
   assert.equal(s.phase, "prep");
+  // The perk draft comes first; no tip covers it.
+  assert.ok(s.perkOffer);
+  assert.equal(dueTip(p, s, 0), null);
+  choosePerk(s, s.perkOffer[0]!);
   assert.equal(dueTip(p, s, 0), "base");
   // Salvage once there is some.
   const pb = markSeen(p, "base");

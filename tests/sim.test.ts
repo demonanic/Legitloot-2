@@ -4,6 +4,7 @@ import { baseConfig, type GameConfig } from "../games/zid/config.js";
 import { wavePlan } from "../games/zid/waves.js";
 import {
   buildTurret,
+  choosePerk,
   createState,
   damageEnemy,
   pickTarget,
@@ -173,6 +174,11 @@ test("clearing a wave returns to preparation and the loop continues", () => {
   assert.equal(s.nextSpawn, 0);
   assert.equal(s.currency, afterBuilding + s.earned, "supplies earned in wave 1 carry into wave 2's prep");
   assert.ok(s.earned > 0);
+  // A perk is on offer and the countdown waits for the pick.
+  assert.equal(s.perkOffer?.length, baseConfig.perks.choices);
+  for (let i = 0; i < 90; i++) step(s, baseConfig, DT);
+  assert.equal(s.phaseTimer, baseConfig.wave.prepSeconds, "frozen while choosing");
+  assert.ok(choosePerk(s, s.perkOffer![0]!).ok);
   // The countdown then launches wave 2 automatically.
   for (let i = 0; i < (baseConfig.wave.prepSeconds + baseConfig.wave.warningSeconds) * 30 + 4; i++) step(s, baseConfig, DT);
   assert.equal(s.phase, "wave");

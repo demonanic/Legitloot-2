@@ -16,6 +16,7 @@ import { forgivingTile, overlapsStronghold, tileStatus } from "./grid.js";
 import type { PanelAction } from "./panel.js";
 import {
   activateBoost,
+  choosePerk,
   aimMortars,
   collectPickup,
   pickupAt,
@@ -221,6 +222,10 @@ function runPanelAction(action: PanelAction): void {
 
 const regions = uiRegions(cfg, () => state, () => view, {
   startNow: () => startWaveNow(state, cfg),
+  pickPerk: (i) => {
+    const id = state.perkOffer?.[i];
+    if (id) choosePerk(state, id);
+  },
   useSalvage: () => {
     // Open the base menu on its convert page, where the amount is chosen.
     const t = cfg.construction.tileSize;

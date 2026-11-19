@@ -202,6 +202,8 @@ export function guidedPending(p: TutorialProgress): boolean {
  */
 export function dueTip(p: TutorialProgress, s: GameState, salvage: number): TipId | null {
   if (p.off) return null;
+  // Nothing pops up over the perk draft.
+  if (s.perkOffer && s.phase === "prep") return null;
   if (s.wave === 1 && s.phase === "prep") {
     const g = TIPS.find((t) => t.guided && !p.seen.includes(t.id));
     if (g) return g.id;

@@ -6,8 +6,10 @@
 
 import type { GameConfig } from "./config.js";
 import { buildableTiles, tileCenter, type Tile } from "./grid.js";
+import type { PerkId } from "./perks.js";
 import {
   buildCost,
+  choosePerk,
   buildStructure,
   buildTurret,
   checkUpgrade,
@@ -38,6 +40,8 @@ export interface Player {
   (s: GameState, cfg: GameConfig): void;
   /** Optional: called every step of an assault (collect pickups, fire boosts). */
   during?: (s: GameState, cfg: GameConfig) => void;
+  /** Optional: which offered perk to take; defaults to the first. */
+  pickPerk?: (offer: readonly PerkId[], s: GameState) => PerkId;
 }
 
 /** Buildable tiles nearest the stronghold first. */
@@ -166,6 +170,7 @@ export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave =
   const s = createState(cfg, seed, options);
   const perWave: RunResult["perWave"] = [];
   while (s.phase !== "lost" && s.wave <= maxWave) {
+    if (s.perkOffer) choosePerk(s, player.pickPerk?.(s.perkOffer, s) ?? s.perkOffer[0]!);
     player(s, cfg);
     const wave = s.wave;
     const hit0 = s.damageTaken;
@@ -187,6 +192,13 @@ export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave =
  * seconds after it appears, and fires Overdrive when the meter is full and a
  * crowd is on the field.
  */
+/** A sensible player's taste in perks: broad firepower and toughness first. */
+const PERK_PREFERENCE: readonly PerkId[] = [
+  "hot-barrels", "heavy-rounds", "reinforced", "big-bang", "scavenger", "field-medic",
+  "armor-piercing", "quick-charge", "overcharge", "napalm", "capacitors", "survivor-training",
+];
+sensiblePlayer.pickPerk = (offer) => [...offer].sort((a, b) => PERK_PREFERENCE.indexOf(a) - PERK_PREFERENCE.indexOf(b))[0]!;
+
 sensiblePlayer.during = (s, cfg) => {
   // Emergency repairs, about twice a second: the most damaged weapon below half health, when Supplies allow.
   if (Math.floor(s.time * 2) !== Math.floor((s.time - 1 / 30) * 2) && s.currency >= 80) {

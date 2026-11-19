@@ -7,6 +7,7 @@ import { rectRegion, type UiRegion } from "../../engine/input/input.js";
 import type { GameConfig } from "./config.js";
 import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
 import { panelModel, type BuildPage, type PanelAction, type PanelSlot } from "./panel.js";
+import { ZOMBIE_NAMES, ZOMBIE_TIPS, wavePreview } from "./preview.js";
 import { TIPS, cardLayout, tipById, type CardButtonId, type CardLayout, type TipHighlight, type TipId } from "./tutorial.js";
 import {
   BLAST_SECONDS,
@@ -910,6 +911,8 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.fillText("INCOMING", W / 2, 300);
   }
 
+  if (s.phase === "prep" || s.phase === "warning") drawWavePreview(ctx, cfg, s);
+
   // Bottom menu for the selected tile, or the prompt and skip button.
   if (model) {
     ctx.fillStyle = "rgba(10,11,10,0.9)";
@@ -1026,6 +1029,8 @@ function highlightRect(cfg: GameConfig, s: GameState, h: TipHighlight): { x: num
       return r.startNow;
     case "meter":
       return r.meter;
+    case "preview":
+      return { x: 4, y: 80, w: r.help.x - 16, h: 54 };
     case "boosts": {
       const a = r.boosts.overdrive;
       const b = r.boosts.shield;
@@ -2414,6 +2419,113 @@ function drawRailgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
 }
 
 /** One zombie, by type: each has its own shape so you can read a wave at a glance. */
+/** Next wave at a glance: who is coming, what is new, and from where. */
+function drawWavePreview(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState): void {
+  const W = cfg.world.width;
+  // Stop short of the Rings and ? buttons on the right.
+  const right = buttonRects(cfg).help.x - 8;
+  const p = wavePreview(cfg, s.wave, s.spawns, s.seenTypes);
+  if (p.count === 0) return;
+  const icon = (type: GameState["enemies"][number]["type"], x: number, y: number, r: number) =>
+    drawZombie(ctx, cfg, s, { id: 7, type, x, y, maxHp: 1, hp: 1, attackCooldown: 0, attacking: false }, r);
+  ctx.save();
+  // Strip of types with counts.
+  const top = 78;
+  const stripH = 58;
+  ctx.fillStyle = "rgba(16,18,16,0.92)";
+  ctx.fillRect(0, top, right, stripH);
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "left";
+  ctx.fillStyle = C.quiet;
+  ctx.font = "700 18px system-ui, sans-serif";
+  ctx.fillText(`${p.count} coming`, 14, top + stripH / 2);
+  const x0 = 130;
+  const chipW = Math.min(88, (right - x0) / p.types.length);
+  p.types.forEach((t, i) => {
+    const cx = x0 + i * chipW;
+    icon(t.type, cx + 14, top + stripH / 2, 12);
+    ctx.fillStyle = p.newTypes.includes(t.type) ? C.coin : C.text;
+    ctx.font = "800 20px system-ui, sans-serif";
+    ctx.fillText(`${t.count}`, cx + 31, top + stripH / 2 + 1);
+  });
+  // A row for each type not met before this run, all in one text size.
+  let y = top + stripH;
+  let size = 18;
+  for (const t of p.newTypes) {
+    ctx.font = "900 18px system-ui, sans-serif";
+    const tx = 54 + ctx.measureText(`NEW ${ZOMBIE_NAMES[t].toUpperCase()}`).width;
+    for (;;) {
+      ctx.font = `600 ${size}px system-ui, sans-serif`;
+      if (size <= 13 || tx + ctx.measureText(ZOMBIE_TIPS[t]).width <= right - 8) break;
+      size--;
+    }
+  }
+  for (const t of p.newTypes) {
+    const rowH = 40;
+    ctx.fillStyle = "rgba(40,34,18,0.9)";
+    ctx.fillRect(0, y, right, rowH);
+    icon(t, 26, y + rowH / 2, 12);
+    ctx.fillStyle = C.coin;
+    ctx.font = "900 18px system-ui, sans-serif";
+    const head = `NEW ${ZOMBIE_NAMES[t].toUpperCase()}`;
+    ctx.fillText(head, 46, y + rowH / 2 + 1);
+    const tx = 54 + ctx.measureText(head).width;
+    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    ctx.fillStyle = C.text;
+    ctx.fillText(ZOMBIE_TIPS[t], tx, y + rowH / 2 + 1);
+    y += rowH;
+  }
+  // Arrows on each side that sends anyone, bigger for more.
+  const pulse = 0.55 + 0.35 * Math.sin(s.time * 5);
+  for (const side of p.sides) {
+    const share = side.count / p.count;
+    const size = 12 + 22 * share;
+    const main = side.edge === p.mainSide;
+    let x = 0;
+    let yy = 0;
+    let angle = 0;
+    switch (side.edge) {
+      case "north":
+        x = Math.min(W - 60, Math.max(60, side.along));
+        yy = y + 14 + size / 2;
+        angle = Math.PI / 2;
+        break;
+      case "south":
+        x = Math.min(W - 60, Math.max(60, side.along));
+        yy = 990;
+        angle = -Math.PI / 2;
+        break;
+      case "west":
+        x = 18 + size / 2;
+        yy = Math.min(960, Math.max(y + 60, side.along));
+        angle = 0;
+        break;
+      case "east":
+        x = W - 18 - size / 2;
+        yy = Math.min(960, Math.max(y + 60, side.along));
+        angle = Math.PI;
+        break;
+    }
+    ctx.globalAlpha = main ? pulse + 0.1 : pulse * 0.75;
+    ctx.fillStyle = C.bad;
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(angle) * size * 0.6, yy + Math.sin(angle) * size * 0.6);
+    ctx.lineTo(x + Math.cos(angle + 2.4) * size * 0.6, yy + Math.sin(angle + 2.4) * size * 0.6);
+    ctx.lineTo(x + Math.cos(angle - 2.4) * size * 0.6, yy + Math.sin(angle - 2.4) * size * 0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = C.bad;
+    ctx.font = `800 ${main ? 20 : 17}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    const label = main ? `MOST · ${side.count}` : `${side.count}`;
+    const lx = side.edge === "west" ? x + size + 20 + (main ? 30 : 0) : side.edge === "east" ? x - size - 20 - (main ? 30 : 0) : x;
+    const ly = side.edge === "north" ? yy + size * 0.6 + 14 : side.edge === "south" ? yy - size * 0.6 - 14 : yy;
+    ctx.fillText(label, lx, ly);
+  }
+  ctx.restore();
+}
+
 function drawZombie(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, e: GameState["enemies"][number], r: number): void {
   const body = (fill: string, width: number) => {
     ctx.fillStyle = e.attacking ? C.walkerAttack : fill;

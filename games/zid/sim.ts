@@ -1097,6 +1097,8 @@ export interface GameState {
   /** The bomber's pass, for drawing only: from, to, and progress. */
   flyover: { x0: number; y0: number; x1: number; y1: number; t: number; total: number } | null;
   spawns: Spawn[];
+  /** Zombie types that have spawned at least once this run (for "new" labels). */
+  seenTypes: EnemyType[];
   nextSpawn: number;
   nextEnemyId: number;
   kills: number;
@@ -1179,6 +1181,7 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     survivors: [],
     lastStandUsed: false,
     spawns: [],
+    seenTypes: [],
     nextSpawn: 0,
     nextEnemyId: 1,
     kills: 0,
@@ -2076,6 +2079,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     s.waveTime += dt;
     while (s.nextSpawn < s.spawns.length && s.spawns[s.nextSpawn]!.at <= s.waveTime) {
       const sp = s.spawns[s.nextSpawn++]!;
+      if (!s.seenTypes.includes(sp.type)) s.seenTypes.push(sp.type);
       if (s.enemies.length >= cfg.limits.maxEnemies) continue;
       s.enemies.push({
         id: s.nextEnemyId++,

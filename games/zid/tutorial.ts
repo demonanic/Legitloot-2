@@ -14,6 +14,7 @@ export type TipId =
   | "manage"
   | "start"
   | "wave"
+  | "preview"
   | "pickup"
   | "charge"
   | "mortar"
@@ -24,7 +25,7 @@ export type TipId =
   | "defeat";
 
 /** What a tip points at; view.ts turns these into rectangles. */
-export type TipHighlight = "supplies" | "start" | "boosts" | "pickup" | "base" | "salvage" | "meter";
+export type TipHighlight = "supplies" | "start" | "boosts" | "pickup" | "base" | "salvage" | "meter" | "preview";
 
 export interface Tip {
   id: TipId;
@@ -140,6 +141,15 @@ export const TIPS: readonly Tip[] = [
     where: "top",
     when: (s) => s.phase === "prep" && s.wavesCleared >= 1,
     highlight: "base",
+  },
+  {
+    id: "preview",
+    title: "Next wave",
+    body: "The strip at the top shows who is coming next. New kinds get a short tip, and red arrows show which sides they will come from.",
+    kind: "info",
+    where: "middle",
+    when: (s) => s.phase === "prep" && s.wave >= 2,
+    highlight: "preview",
   },
   {
     id: "truck",

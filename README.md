@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Wave preview
+
+- Between waves a strip under the top bar shows the next wave: how many are coming and a count for each kind, with its icon.
+- The first time a kind shows up in a run it gets a gold **NEW** line with one tip on how to beat it.
+- Red arrows on the map edges show the sides they will come from, sized by how many. A side sending half or more is marked **MOST**.
+- A one-time tutorial tip explains the strip before wave 2.
+
 ### New zombies
 
 - **Armored** (from wave 5): slow and tough. Bullets do only half damage; shells, fire, arcs, beams and blasts hit in full.

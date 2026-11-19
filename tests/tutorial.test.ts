@@ -73,7 +73,9 @@ test("one-time tips: each appears when its moment comes, and never again once se
   assert.equal(s.phase, "prep");
   assert.equal(dueTip(p, s, 0), "base");
   // Salvage once there is some.
-  const q = markSeen(p, "base");
+  const pb = markSeen(p, "base");
+  assert.equal(dueTip(pb, s, 0), "preview");
+  const q = markSeen(pb, "preview");
   assert.equal(dueTip(q, s, 0), null);
   assert.equal(dueTip(q, s, 30), "salvage");
   // Defeat.

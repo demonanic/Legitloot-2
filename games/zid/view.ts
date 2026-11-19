@@ -19,6 +19,7 @@ import {
   lastBarrel,
   SPLAT_SECONDS,
   ARC_SECONDS,
+  BEAM_SECONDS,
   salvageUsable,
   BOOST_KINDS,
   boostUnlocked,
@@ -110,7 +111,7 @@ export const MANAGE_MESSAGES: Record<ManageRejection, string> = {
   "no-such-structure": "Nothing there",
   "not-a-turret": "Only turrets can be upgraded",
   "not-a-barricade": "Only barricades can be reinforced",
-  "not-for-mortar": "Mortars can't upgrade range",
+  "not-for-mortar": "Only turrets can upgrade range",
   destroyed: "Rebuild it first",
   "nothing-to-repair": "Already at full health",
   "max-level": "Already at max level",
@@ -491,6 +492,7 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     else if (sl.kind === "shotgun") drawShotgun(ctx, cfg, s, sl);
     else if (sl.kind === "flamer") drawFlamer(ctx, cfg, s, sl);
     else if (sl.kind === "tesla") drawTesla(ctx, cfg, s, sl);
+    else if (sl.kind === "railgun") drawRailgun(ctx, cfg, s, sl);
     else drawMachineGun(ctx, cfg, s, sl);
     {
       // Upgrade pips: speed (left, amber) and damage (right, red), one per level.
@@ -737,6 +739,24 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   }
 
   // Tesla bolts: jagged lightning from the coil through every zombie it struck, re-jittered each frame.
+  // Railgun beams: a white-hot core in a blue glow, thinning as it fades.
+  for (const b of s.beams) {
+    const k = b.life / BEAM_SECONDS;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = `rgba(110,180,255,${(0.35 * k).toFixed(3)})`;
+    ctx.lineWidth = (20 + b.power * 3) * (0.4 + 0.6 * k);
+    ctx.beginPath();
+    ctx.moveTo(b.x1, b.y1);
+    ctx.lineTo(b.x2, b.y2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(245,250,255,${(0.95 * k).toFixed(3)})`;
+    ctx.lineWidth = (5 + b.power) * k + 1;
+    ctx.beginPath();
+    ctx.moveTo(b.x1, b.y1);
+    ctx.lineTo(b.x2, b.y2);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+  }
   for (const a of s.arcs) {
     const k = a.life / ARC_SECONDS;
     for (const [width, color] of [[9, `rgba(120,190,255,${(0.35 * k).toFixed(3)})`], [3.5, `rgba(235,246,255,${(0.95 * k).toFixed(3)})`]] as const) {
@@ -2266,4 +2286,83 @@ function drawTesla(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState,
     ctx.lineTo(bx + Math.cos(a) * l, by + Math.sin(a) * l);
     ctx.stroke();
   }
+}
+
+/**
+ * Railgun: a heavy base, a long twin-rail barrel that glows brighter as it
+ * charges, a hard recoil and a muzzle burst when it fires. Speed adds
+ * capacitor bands along the rails; Damage makes the charge glow hotter.
+ */
+function drawRailgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, sl: Structure): void {
+  const t = sl.turret!;
+  const g = cfg.railgun;
+  const r = g.radius;
+  if (sl.hp < sl.maxHp) bar(ctx, sl.x - 28, sl.y - 38, 56, 6, sl.hp / sl.maxHp, C.warn);
+  const rate = g.fireRate * (1 + cfg.upgrades.speed.perLevel * t.speed);
+  const charge = t.shots > 0 ? Math.min(1, (s.time - t.lastShot) * rate) : 1;
+  const kick = fresh(s, t.lastShot, 0.35);
+  const cos = Math.cos(t.aim);
+  const sin = Math.sin(t.aim);
+  const px = -sin;
+  const py = cos;
+  // Base: a square plate turned with the gun.
+  ctx.save();
+  ctx.translate(sl.x, sl.y);
+  ctx.rotate(t.aim);
+  ctx.fillStyle = "#3e464d";
+  ctx.strokeStyle = C.walkerEdge;
+  ctx.lineWidth = 3;
+  roundRect(ctx, -r, -r, r * 2, r * 2, 6);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  drawRank(ctx, sl.x, sl.y, r, t);
+  // Barrel: two rails, kicked back hard on a shot.
+  const back = kick * 10;
+  const bx = sl.x - cos * back;
+  const by = sl.y - sin * back;
+  const len = r + 34;
+  for (const side of [-1, 1]) {
+    ctx.strokeStyle = "#20262b";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(bx - cos * 6 + px * 5 * side, by - sin * 6 + py * 5 * side);
+    ctx.lineTo(bx + cos * len + px * 5 * side, by + sin * len + py * 5 * side);
+    ctx.stroke();
+  }
+  // The charge: blue light filling the gap between the rails, hotter with Damage.
+  const hot = t.strength >= 3;
+  ctx.strokeStyle = hot ? `rgba(220,240,255,${(0.25 + 0.75 * charge).toFixed(3)})` : `rgba(110,180,255,${(0.2 + 0.8 * charge).toFixed(3)})`;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(bx, by);
+  ctx.lineTo(bx + cos * len * charge, by + sin * len * charge);
+  ctx.stroke();
+  if (charge >= 1) {
+    // Ready: a pulsing spark at the muzzle.
+    const pulse = 0.5 + 0.5 * Math.sin(s.time * 12 + sl.id);
+    ctx.fillStyle = `rgba(190,225,255,${(0.4 + 0.5 * pulse).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(bx + cos * len, by + sin * len, 3 + pulse * 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Capacitor bands: one, plus one per Speed level, along the rails.
+  for (let i = 0; i < 1 + Math.min(4, t.speed); i++) {
+    const d = 6 + i * 7;
+    ctx.strokeStyle = "#c98a4a";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(bx + cos * d + px * 9, by + sin * d + py * 9);
+    ctx.lineTo(bx + cos * d - px * 9, by + sin * d - py * 9);
+    ctx.stroke();
+  }
+  // Muzzle burst on firing.
+  const flash = fresh(s, t.lastShot, 0.12);
+  if (flash > 0 && t.shots > 0) {
+    ctx.fillStyle = `rgba(235,245,255,${flash.toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(bx + cos * (len + 6), by + sin * (len + 6), 10 + (1 - flash) * 14, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  drawSmoke(ctx, s, bx + cos * len, by + sin * len, t.lastShot, 1.2, 6);
 }

@@ -235,6 +235,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
               buildButton("a0", "shotgun", "Shotgun"),
               buildButton("b0", "flamer", "Flamer"),
               buildButton("a1", "tesla", "Tesla"),
+              buildButton("b1", "railgun", "Railgun"),
               { slot: "a2", label: "Traps & walls ›", enabled: true, action: { kind: "page", page: "traps" } },
               close,
             ]
@@ -246,7 +247,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
             close,
           ];
     return {
-      title: blocked ? "Can't build here" : page === "weapons" ? "Build a weapon" : page === "close" ? "Build a close-range weapon" : "Build a trap or wall",
+      title: blocked ? "Can't build here" : page === "weapons" ? "Build a weapon" : page === "close" ? "Build a special weapon" : "Build a trap or wall",
       note: blocked,
       buttons,
       target: { kind: "tile" },
@@ -354,7 +355,7 @@ export function panelModel(s: GameState, cfg: GameConfig, sel: Tile, pageIn: Bui
 
 /** " · unlocks Gatling" when that base level unlocks something, else "". */
 function nextUnlock(cfg: GameConfig, baseLevel: number): string {
-  const names: Record<string, string> = { tripwire: "Trip wire", shotgun: "Shotgun", flamer: "Flamethrower", tesla: "Tesla coil", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
+  const names: Record<string, string> = { tripwire: "Trip wire", shotgun: "Shotgun", flamer: "Flamethrower", tesla: "Tesla coil", railgun: "Railgun", gatling: "Gatling", rocket: "Rockets", mine: "Mines", mortar: "Mortar" };
   const kinds = Object.entries(cfg.unlocks)
     .filter(([, lvl]) => lvl === baseLevel)
     .map(([k]) => names[k] ?? k);

@@ -44,7 +44,7 @@ export interface Tip {
 }
 
 const hasKind = (s: GameState, kinds: readonly string[]) => s.structures.some((st) => kinds.includes(st.kind) && !st.destroyed);
-const WEAPONS = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla"];
+const WEAPONS = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla", "railgun"];
 
 export const TIPS: readonly Tip[] = [
   {

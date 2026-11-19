@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Railgun
+
+- **Railgun** (220, base level 6; one allowed), on the "More weapons" page (now titled "Build a special weapon").
+- Charges for about 3 seconds, then fires a straight beam out to 470 that passes through every zombie on the line, each taking 120 damage. It aims along whichever line through a zombie in range hits the most zombies.
+- Speed and Damage upgrades apply (1.6× price). The barrel's charge glow fills between shots, with a hard recoil and a white-blue beam; Speed adds capacitor bands, Damage a hotter glow and a thicker beam.
+- Fully upgraded against wave-18 walkers it kills about 50% more than a mortar in a dense stream and about as many as a Tesla coil in a thin one.
+
 ### Tutorial
 
 - **Guided start** for a first-time player (stored in the browser as `zid.tutorial`): welcome, Supplies, build your first turret (waits until you do), upgrade/repair/recycle, and starting the wave. The game is paused while each card is up. "Skip tutorial" ends it and stops automatic tips.

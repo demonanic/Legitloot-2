@@ -251,10 +251,10 @@ test("menu: a third build page offers Shotgun and Flamethrower; pages cycle", ()
   const c = panelModel(s, cfg, { col: 2, row: 4 }, "close");
   assert.deepEqual(
     c.buttons.map((b) => (b.action.kind === "build" ? b.action.structure : b.action.kind)),
-    ["shotgun", "flamer", "tesla", "page", "close"],
+    ["shotgun", "flamer", "tesla", "railgun", "page", "close"],
   );
   assert.match(c.buttons[0]!.label, /base 2/);
-  assert.deepEqual(c.buttons[3]!.action, { kind: "page", page: "traps" });
+  assert.deepEqual(c.buttons[4]!.action, { kind: "page", page: "traps" });
 });
 
 // --- Tesla coil ------------------------------------------------------------------
@@ -369,4 +369,76 @@ test("tesla: when the bolt runs out of zombies ahead, it forks back to one near 
   assert.deepEqual(chain.map((x) => x.from), [-1, 0, 0], "both branches leave the middle zombie");
   step(s, cfg, DT);
   assert.ok(left.hp < 1e9);
+});
+
+// --- Railgun ---------------------------------------------------------------------
+
+import { railgunAim, railgunHits } from "../games/zid/sim.js";
+
+function railgun(s: GameState) {
+  s.phase = "prep";
+  s.stronghold.level = 5; // base level 6
+  const r = buildStructure(s, cfg, "railgun", 4, 7);
+  assert.ok(r.ok, JSON.stringify(r));
+  s.phase = "wave";
+  return r.structure;
+}
+
+test("railgun: unlocks at base level 6 with a limit of one", () => {
+  const s = createState(cfg, 1);
+  s.currency = 10_000;
+  assert.equal(cfg.unlocks.railgun, 6);
+  s.stronghold.level = 4;
+  assert.equal(checkBuild(s, cfg, 4, 7, "railgun"), "locked");
+  s.stronghold.level = 5;
+  assert.ok(buildStructure(s, cfg, "railgun", 4, 7).ok);
+  assert.equal(checkBuild(s, cfg, 5, 7, "railgun"), "limit-reached");
+});
+
+test("railgun: the beam passes through every zombie on the line, each taking full damage, and nothing off it", () => {
+  const s = assault();
+  const g = railgun(s);
+  const line = [zombie(s, g.x, g.y - 80), zombie(s, g.x + 4, g.y - 200), zombie(s, g.x - 3, g.y - 380)];
+  const off = zombie(s, g.x + 90, g.y - 200);
+  const beyond = zombie(s, g.x, g.y - cfg.railgun.range - 80);
+  step(s, cfg, DT);
+  const dmg = turretStats(cfg, g.turret!, "railgun").damage;
+  for (const e of line) assert.ok(Math.abs(1e9 - e.hp - dmg) < 1e-6, "full damage to each");
+  assert.equal(off.hp, 1e9);
+  assert.equal(beyond.hp, 1e9);
+  assert.equal(s.beams.length, 1);
+});
+
+test("railgun: it picks the line through the most zombies, not the nearest one", () => {
+  const s = assault();
+  const g = railgun(s);
+  const lone = zombie(s, g.x - 90, g.y - 40); // nearest, but alone
+  const row = [zombie(s, g.x + 100, g.y - 100), zombie(s, g.x + 200, g.y - 200), zombie(s, g.x + 300, g.y - 300)];
+  const aim = railgunAim(s, cfg, g)!;
+  assert.equal(railgunHits(s, cfg, g, aim).length, 3);
+  step(s, cfg, DT);
+  assert.equal(lone.hp, 1e9);
+  assert.ok(row.every((e) => e.hp < 1e9));
+});
+
+test("railgun: slow to fire; kills along the beam each pay once; Speed and Damage apply, Range doesn't", () => {
+  const s = assault();
+  const g = railgun(s);
+  zombie(s, g.x, g.y - 300); // a target that survives, to keep it firing
+  run(s, 1 / cfg.railgun.fireRate - 0.2);
+  assert.equal(g.turret!.shots, 1, "one shot in its first charge cycle");
+  const t = assault();
+  const h = railgun(t);
+  for (let i = 0; i < 4; i++) zombie(t, h.x, h.y - 60 - i * 40, 1);
+  zombie(t, 700, 1270).attackCooldown = 1e9;
+  const kills = t.kills;
+  step(t, cfg, DT);
+  assert.equal(t.kills - kills, 4);
+  t.phase = "prep";
+  const base = turretStats(cfg, h.turret!, "railgun");
+  assert.ok(upgradeTurret(t, cfg, h.id, "speed").ok);
+  assert.ok(upgradeTurret(t, cfg, h.id, "strength").ok);
+  assert.deepEqual(upgradeTurret(t, cfg, h.id, "range"), { ok: false, reason: "not-for-mortar" });
+  const up = turretStats(cfg, h.turret!, "railgun");
+  assert.ok(up.fireRate > base.fireRate && up.damage > base.damage);
 });

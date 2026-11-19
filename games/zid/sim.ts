@@ -37,10 +37,10 @@ export interface Turret {
   barrel: number;
 }
 
-export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "tesla" | "barricade" | "mine" | "tripwire";
-export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla"];
+export type StructureKind = "machine-gun" | "gatling" | "rocket" | "mortar" | "shotgun" | "flamer" | "tesla" | "railgun" | "barricade" | "mine" | "tripwire";
+export const TURRET_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla", "railgun"];
 export const TRAP_KINDS: readonly StructureKind[] = ["mine", "tripwire"];
-export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla", "mine", "tripwire", "barricade"];
+export const ALL_KINDS: readonly StructureKind[] = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flamer", "tesla", "railgun", "mine", "tripwire", "barricade"];
 
 export function isTrap(kind: StructureKind): boolean {
   return kind === "mine" || kind === "tripwire";
@@ -53,6 +53,7 @@ export const KIND_NAMES: Record<StructureKind, string> = {
   shotgun: "Shotgun",
   flamer: "Flamethrower",
   tesla: "Tesla coil",
+  railgun: "Railgun",
   rocket: "Rocket launcher",
   mortar: "Mortar",
   barricade: "Barricade",
@@ -971,6 +972,17 @@ export interface Arc {
 }
 export const ARC_SECONDS = 0.22;
 
+/** A railgun beam, for drawing only. `power` = the gun's Damage level, for a brighter beam. */
+export interface Beam {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  life: number;
+  power: number;
+}
+export const BEAM_SECONDS = 0.35;
+
 /** A brief explosion marker, for drawing only. */
 export interface Blast {
   x: number;
@@ -1043,6 +1055,7 @@ export interface GameState {
   /** Splatters where zombies died, for drawing only. */
   splats: Splat[];
   arcs: Arc[];
+  beams: Beam[];
   /** Collectable icons on the field. */
   pickups: Pickup[];
   nextPickupId: number;
@@ -1133,6 +1146,7 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     popups: [],
     splats: [],
     arcs: [],
+    beams: [],
     pickups: [],
     nextPickupId: 1,
     pickupTimer: cfg.pickups.everyMin,
@@ -1242,6 +1256,8 @@ export function buildCost(cfg: GameConfig, kind: StructureKind): number {
       return cfg.flamer.cost;
     case "tesla":
       return cfg.tesla.cost;
+    case "railgun":
+      return cfg.railgun.cost;
     case "rocket":
       return cfg.rocket.cost;
     case "mine":
@@ -1267,6 +1283,8 @@ function kindMaxHp(cfg: GameConfig, kind: StructureKind): number {
       return cfg.flamer.maxHp;
     case "tesla":
       return cfg.tesla.maxHp;
+    case "railgun":
+      return cfg.railgun.maxHp;
     case "rocket":
       return cfg.rocket.maxHp;
     case "mine":
@@ -1316,6 +1334,8 @@ export function buildLimit(s: GameState, cfg: GameConfig, kind: StructureKind): 
       return lvl.flamers;
     case "tesla":
       return lvl.teslas;
+    case "railgun":
+      return lvl.railguns;
     case "rocket":
       return lvl.rockets;
     case "mine":
@@ -1448,7 +1468,7 @@ export function nextUpgradeCost(cfg: GameConfig, st: Structure, path: UpgradePat
   const base = costs[level]!;
   // Heavier weapons' upgrades cost more, rounded to a multiple of 5.
   const mult =
-    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : st.kind === "shotgun" ? cfg.shotgun.upgradeCostMultiplier : st.kind === "flamer" ? cfg.flamer.upgradeCostMultiplier : st.kind === "tesla" ? cfg.tesla.upgradeCostMultiplier : 1;
+    st.kind === "mortar" ? cfg.mortar.upgradeCostMultiplier : st.kind === "gatling" ? cfg.gatling.upgradeCostMultiplier : st.kind === "rocket" ? cfg.rocket.upgradeCostMultiplier : st.kind === "shotgun" ? cfg.shotgun.upgradeCostMultiplier : st.kind === "flamer" ? cfg.flamer.upgradeCostMultiplier : st.kind === "tesla" ? cfg.tesla.upgradeCostMultiplier : st.kind === "railgun" ? cfg.railgun.upgradeCostMultiplier : 1;
   return mult === 1 ? base : Math.round((base * mult) / 5) * 5;
 }
 
@@ -1612,6 +1632,7 @@ export function turretStats(cfg: GameConfig, t: Turret, kind: StructureKind = "m
   else if (kind === "shotgun") [rate, dmg] = [cfg.shotgun.fireRate, cfg.shotgun.damage];
   else if (kind === "flamer") [rate, dmg] = [cfg.flamer.fireRate, cfg.flamer.damage];
   else if (kind === "tesla") [rate, dmg] = [cfg.tesla.fireRate, cfg.tesla.damage];
+  else if (kind === "railgun") [rate, dmg] = [cfg.railgun.fireRate, cfg.railgun.damage];
   return {
     fireRate: rate * (1 + cfg.upgrades.speed.perLevel * t.speed),
     damage: dmg * (1 + cfg.upgrades.strength.perLevel * t.strength),
@@ -1783,6 +1804,7 @@ export function turretRange(cfg: GameConfig, st: Structure): number {
   if (st.kind === "shotgun") return cfg.shotgun.range;
   if (st.kind === "flamer") return cfg.flamer.range;
   if (st.kind === "tesla") return cfg.tesla.range;
+  if (st.kind === "railgun") return cfg.railgun.range;
   return cfg.turret.range * (1 + cfg.upgrades.range.perLevel * (st.turret?.range ?? 0));
 }
 
@@ -2237,6 +2259,10 @@ function stepTurrets(s: GameState, cfg: GameConfig, dt: number): void {
       stepTesla(s, cfg, slot, tur, dt);
       continue;
     }
+    if (slot.kind === "railgun") {
+      stepRailgun(s, cfg, slot, tur, dt);
+      continue;
+    }
     const gatling = slot.kind === "gatling";
     const t = gatling ? cfg.gatling : cfg.turret;
     tur.cooldown -= dt;
@@ -2381,6 +2407,86 @@ function stepTesla(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, 
     damageEnemy(s, cfg, c.enemy, dmg);
     dmg *= t.falloff;
   }
+}
+
+/**
+ * The zombies a railgun beam fired from `slot` along angle `aim` would hit:
+ * every living zombie whose body touches the beam, out to the railgun's range.
+ */
+export function railgunHits(s: GameState, cfg: GameConfig, slot: Structure, aim: number): Enemy[] {
+  const r = cfg.railgun;
+  const cos = Math.cos(aim);
+  const sin = Math.sin(aim);
+  const hits: Enemy[] = [];
+  for (const e of s.enemies) {
+    if (e.hp <= 0) continue;
+    const dx = e.x - slot.x;
+    const dy = e.y - slot.y;
+    const along = dx * cos + dy * sin;
+    const reach = cfg.enemies[e.type].radius;
+    if (along < -reach || along > r.range + reach) continue;
+    if (Math.abs(-dx * sin + dy * cos) <= r.beamWidth / 2 + reach) hits.push(e);
+  }
+  return hits;
+}
+
+/**
+ * The best line to fire along: aimed at one of the zombies in range, chosen
+ * so the beam passes through as many zombies as possible (ties: the most
+ * total health, then the lowest id). Null when nothing is in range.
+ */
+export function railgunAim(s: GameState, cfg: GameConfig, slot: Structure): number | null {
+  const range = cfg.railgun.range;
+  let best: number | null = null;
+  let bestCount = 0;
+  let bestHp = 0;
+  let bestId = Infinity;
+  for (const e of s.enemies) {
+    if (e.hp <= 0 || Math.hypot(e.x - slot.x, e.y - slot.y) > range) continue;
+    const aim = Math.atan2(e.y - slot.y, e.x - slot.x);
+    const hits = railgunHits(s, cfg, slot, aim);
+    const hp = hits.reduce((n, h) => n + h.hp, 0);
+    if (hits.length > bestCount || (hits.length === bestCount && (hp > bestHp || (hp === bestHp && e.id < bestId)))) {
+      best = aim;
+      bestCount = hits.length;
+      bestHp = hp;
+      bestId = e.id;
+    }
+  }
+  return best;
+}
+
+/** Railgun: a long charge, then one beam through everything on the line. */
+function stepRailgun(s: GameState, cfg: GameConfig, slot: Structure, tur: Turret, dt: number): void {
+  const r = cfg.railgun;
+  const stats = turretStats(cfg, tur, "railgun");
+  tur.cooldown -= dt;
+  // Between shots it tracks the nearest zombie in range, so the barrel turns smoothly.
+  const near = pickNearest(s, slot.x, slot.y, r.range, null);
+  tur.targetId = near?.id ?? null;
+  if (near) {
+    const want = Math.atan2(near.y - slot.y, near.x - slot.x);
+    let da = want - tur.aim;
+    da = Math.atan2(Math.sin(da), Math.cos(da));
+    tur.aim += Math.max(-3 * dt, Math.min(3 * dt, da));
+  }
+  if (tur.cooldown > 0) return;
+  const aim = railgunAim(s, cfg, slot);
+  if (aim === null) {
+    tur.cooldown = 0;
+    return;
+  }
+  tur.cooldown += 1 / stats.fireRate;
+  if (tur.cooldown < 0) tur.cooldown = 0;
+  tur.lastShot = s.time;
+  tur.shots++;
+  s.shotsFired++;
+  tur.aim = aim;
+  const hits = railgunHits(s, cfg, slot, aim);
+  const mx = slot.x + Math.cos(aim) * (r.radius + 18);
+  const my = slot.y + Math.sin(aim) * (r.radius + 18);
+  if (s.beams.length < 30) s.beams.push({ x1: mx, y1: my, x2: slot.x + Math.cos(aim) * r.range, y2: slot.y + Math.sin(aim) * r.range, life: BEAM_SECONDS, power: tur.strength });
+  for (const e of hits) damageEnemy(s, cfg, e, stats.damage);
 }
 
 /** Whether a point is inside a flamethrower's cone. */
@@ -2647,6 +2753,10 @@ function stepBlasts(s: GameState, dt: number): void {
   if (s.notices.length > 0) {
     for (const n of s.notices) n.life -= dt;
     s.notices = s.notices.filter((n) => n.life > 0);
+  }
+  if (s.beams.length > 0) {
+    for (const b of s.beams) b.life -= dt;
+    s.beams = s.beams.filter((b) => b.life > 0);
   }
   if (s.arcs.length > 0) {
     for (const a of s.arcs) a.life -= dt;

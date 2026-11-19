@@ -37,6 +37,13 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### Sound
+
+- Synthesized sound effects: no audio files, nothing to download. Every weapon has its own (gun crack, shotgun boom, flamer roar, Tesla zap, railgun whine, mortar thump, rocket whoosh). There are also explosions, boomer acid, boss stomps and roars, spitter globs, stronghold hits, wrecked buildings, building, pickups, perk chimes, and cues for the warning, wave start, wave cleared and defeat.
+- A low backing track is calm between waves, builds in the warning, drives during the assault and is loudest with a boss out.
+- Sound starts on your first tap (browsers require this). A **Sound on/off** button sits under **?** and is remembered. Audio pauses when you switch away from the game.
+- Repeats are rate-limited so a full line of guns doesn't turn into noise.
+
 ### Perks
 
 - After every cleared wave, **pick one of three perks**. They stack up to a cap and last the whole run. The break's countdown waits while you choose; starting the wave early skips the pick.

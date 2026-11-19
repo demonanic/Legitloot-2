@@ -188,6 +188,13 @@ export function playRun(cfg: GameConfig, seed: number, player: Player, maxWave =
  * crowd is on the field.
  */
 sensiblePlayer.during = (s, cfg) => {
+  // Emergency repairs, about twice a second: the most damaged weapon below half health, when Supplies allow.
+  if (Math.floor(s.time * 2) !== Math.floor((s.time - 1 / 30) * 2) && s.currency >= 80) {
+    const hurt = s.structures
+      .filter((st) => st.turret && !st.destroyed && st.hp < st.maxHp * 0.5)
+      .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+    if (hurt) repair(s, cfg, { kind: "structure", id: hurt.id });
+  }
   for (const p of [...s.pickups]) {
     if (p.life <= cfg.pickups.lifeSeconds - 2) collectPickup(s, cfg, p.id);
   }

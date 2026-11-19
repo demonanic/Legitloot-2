@@ -8,8 +8,8 @@
  */
 
 export type Edge = "north" | "south" | "east" | "west";
-export type EnemyType = "walker" | "runner" | "brute";
-export const ENEMY_TYPES: readonly EnemyType[] = ["walker", "runner", "brute"];
+export type EnemyType = "walker" | "runner" | "brute" | "armored" | "spitter" | "boomer" | "screamer";
+export const ENEMY_TYPES: readonly EnemyType[] = ["walker", "runner", "brute", "armored", "spitter", "boomer", "screamer"];
 
 export interface EnemyStats {
   maxHp: number;
@@ -22,6 +22,22 @@ export interface EnemyStats {
   attackCooldown: number;
   /** Supplies drop: `chance` (0..1) of dropping between `min` and `max` inclusive. */
   drop: { chance: number; min: number; max: number };
+  /** Armored: bullets (turrets, Gatling, shotgun, survivors) do only this share of their damage. */
+  bulletFactor?: number;
+  /**
+   * Spitter: stops at `range` from the nearest weapon or wall and lobs acid
+   * at it every `cooldown` seconds for `damage`; globs fly at `speed`.
+   */
+  spit?: { range: number; damage: number; cooldown: number; speed: number };
+  /**
+   * Boomer: explodes on reaching anything solid, hitting every structure, the
+   * stronghold, the truck and survivors within `radius` for `damage`. Shot
+   * dead first, it still bursts, but then only hurts zombies around it, for
+   * `zombieShare` of a walker's health this wave.
+   */
+  blast?: { radius: number; damage: number; zombieShare: number };
+  /** Screamer: other zombies within `radius` move `speedBoost` faster (0.4 = 40%). */
+  aura?: { radius: number; speedBoost: number };
 }
 
 export interface BaseLevel {
@@ -102,6 +118,19 @@ export interface WaveRules {
   bruteFrom: number;
   bruteShareStep: number;
   bruteShareMax: number;
+  /** The newer zombie types join from these waves, growing by `step` a wave up to `max`. */
+  armoredFrom: number;
+  armoredShareStep: number;
+  armoredShareMax: number;
+  spitterFrom: number;
+  spitterShareStep: number;
+  spitterShareMax: number;
+  boomerFrom: number;
+  boomerShareStep: number;
+  boomerShareMax: number;
+  screamerFrom: number;
+  screamerShareStep: number;
+  screamerShareMax: number;
   /** Spawn window: `spawnBaseSeconds` + `spawnSecondsPerWave` × (wave − 1), capped. */
   spawnBaseSeconds: number;
   spawnSecondsPerWave: number;
@@ -580,18 +609,34 @@ export const baseConfig: GameConfig = {
     walker: { maxHp: 26, speed: 31, radius: 11, structureDamage: 8, attackCooldown: 1, drop: { chance: 0.6, min: 3, max: 6 } },
     runner: { maxHp: 14, speed: 67, radius: 8, structureDamage: 5, attackCooldown: 0.6, drop: { chance: 0.5, min: 2, max: 4 } },
     brute: { maxHp: 150, speed: 18, radius: 18, structureDamage: 30, attackCooldown: 1.4, drop: { chance: 1, min: 12, max: 20 } },
+    armored: { maxHp: 110, speed: 22, radius: 15, structureDamage: 14, attackCooldown: 1.2, drop: { chance: 1, min: 8, max: 12 }, bulletFactor: 0.5 },
+    spitter: { maxHp: 34, speed: 27, radius: 12, structureDamage: 6, attackCooldown: 1, drop: { chance: 0.7, min: 4, max: 7 }, spit: { range: 140, damage: 6, cooldown: 2.2, speed: 260 } },
+    boomer: { maxHp: 55, speed: 29, radius: 15, structureDamage: 0, attackCooldown: 1, drop: { chance: 0.8, min: 5, max: 8 }, blast: { radius: 75, damage: 70, zombieShare: 1.5 } },
+    screamer: { maxHp: 45, speed: 30, radius: 12, structureDamage: 6, attackCooldown: 1, drop: { chance: 1, min: 6, max: 10 }, aura: { radius: 120, speedBoost: 0.4 } },
   },
   wave: { prepSeconds: 20, warningSeconds: 3, edges: ["north", "south", "east", "west"] },
   waves: {
     baseCount: 40,
     countPerWave: 6,
-    hpGrowthPerWave: 0.24, // lowered from 0.285 after real play kept ending on wave 11; see scripts/balance.mjs
+    hpGrowthPerWave: 0.22, // lowered from 0.285 after real play kept ending on wave 11; see scripts/balance.mjs
     runnerFrom: 2,
     runnerShareStep: 0.05,
     runnerShareMax: 0.3,
     bruteFrom: 4,
     bruteShareStep: 0.02,
     bruteShareMax: 0.12,
+    armoredFrom: 5,
+    armoredShareStep: 0.02,
+    armoredShareMax: 0.1,
+    spitterFrom: 4,
+    spitterShareStep: 0.015,
+    spitterShareMax: 0.06,
+    boomerFrom: 6,
+    boomerShareStep: 0.015,
+    boomerShareMax: 0.07,
+    screamerFrom: 7,
+    screamerShareStep: 0.01,
+    screamerShareMax: 0.04,
     spawnBaseSeconds: 36,
     spawnSecondsPerWave: 2,
     spawnMaxSeconds: 60,

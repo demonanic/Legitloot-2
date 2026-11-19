@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type GameConfig } from "../games/zid/config.js";
+import { baseConfig, ENEMY_TYPES, type GameConfig } from "../games/zid/config.js";
 import { buildOnlyPlayer, passivePlayer, playRun, sensiblePlayer } from "../games/zid/bots.js";
 import {
   buildTurret,
@@ -202,12 +202,17 @@ test("waves: every wave is harder than the last, with no spike over 40%", () => 
   }
 });
 
-test("waves: runners and brutes arrive on schedule, and the mix always sums to 1", () => {
+test("waves: every zombie type arrives on schedule, and the mix always sums to 1", () => {
+  const from = {
+    runner: cfg.waves.runnerFrom, brute: cfg.waves.bruteFrom, armored: cfg.waves.armoredFrom,
+    spitter: cfg.waves.spitterFrom, boomer: cfg.waves.boomerFrom, screamer: cfg.waves.screamerFrom,
+  } as const;
   for (let w = 1; w <= 30; w++) {
     const p = wavePlan(cfg, w);
-    assert.ok(Math.abs(p.mix.walker + p.mix.runner + p.mix.brute - 1) < 1e-9);
-    assert.equal(p.mix.runner > 0, w >= cfg.waves.runnerFrom);
-    assert.equal(p.mix.brute > 0, w >= cfg.waves.bruteFrom);
+    const total = ENEMY_TYPES.reduce((sum, t) => sum + p.mix[t], 0);
+    assert.ok(Math.abs(total - 1) < 1e-9);
+    for (const [t, f] of Object.entries(from)) assert.equal(p.mix[t as keyof typeof from] > 0, w >= f, `${t} wave ${w}`);
+    assert.ok(p.mix.walker > 0.3, `walkers stay the bulk on wave ${w}`);
   }
 });
 

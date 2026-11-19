@@ -989,6 +989,20 @@ export interface Blast {
   y: number;
   r: number;
   life: number;
+  /** "acid" = a boomer's green burst. */
+  kind?: "acid";
+}
+
+/** A spitter's acid glob in flight toward a structure (id) or the stronghold (-1). */
+export interface Spit {
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+  total: number;
+  left: number;
+  damage: number;
+  target: number;
 }
 
 export interface Enemy {
@@ -1000,6 +1014,8 @@ export interface Enemy {
   hp: number;
   attackCooldown: number;
   attacking: boolean;
+  /** Sped up by a screamer this step, for drawing. */
+  boosted?: boolean;
   /** Seconds left on fire, and the damage per second while burning. */
   burn?: number;
   burnDps?: number;
@@ -1056,6 +1072,7 @@ export interface GameState {
   splats: Splat[];
   arcs: Arc[];
   beams: Beam[];
+  spits: Spit[];
   /** Collectable icons on the field. */
   pickups: Pickup[];
   nextPickupId: number;
@@ -1147,6 +1164,7 @@ export function createState(cfg: GameConfig, seed: number, options: RunOptions =
     splats: [],
     arcs: [],
     beams: [],
+    spits: [],
     pickups: [],
     nextPickupId: 1,
     pickupTimer: cfg.pickups.everyMin,
@@ -1822,6 +1840,15 @@ export function damageEnemy(s: GameState, cfg: GameConfig, e: Enemy, amount: num
   if (e.hp <= 0) {
     e.hp = 0;
     s.kills++;
+    // A boomer shot dead still bursts, but only zombies around it are hurt.
+    const b = cfg.enemies[e.type].blast;
+    if (b) {
+      const dmg = cfg.enemies.walker.maxHp * wavePlan(cfg, s.wave).hpMultiplier * b.zombieShare;
+      s.blasts.push({ x: e.x, y: e.y, r: b.radius, life: BLAST_SECONDS, kind: "acid" });
+      for (const o of s.enemies) {
+        if (o.hp > 0 && o !== e && Math.hypot(o.x - e.x, o.y - e.y) <= b.radius) damageEnemy(s, cfg, o, dmg, by);
+      }
+    }
     if (by) creditKill(s, cfg, by);
     const bounty = s.boost?.kind === "bounty" ? cfg.boost.bounty.drops : 1;
     const drop = rollDrop(s, cfg, e.type) * bounty;
@@ -2077,6 +2104,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
   stepTruck(s, cfg, dt);
   stepSurvivors(s, cfg, dt);
   stepEnemies(s, cfg, dt);
+  stepSpits(s, dt);
   stepTraps(s, cfg);
   stepTurrets(s, cfg, s.boost?.kind === "overdrive" ? dt * cfg.boost.overdrive.fireRate : dt);
   stepProjectiles(s, cfg, dt);
@@ -2094,6 +2122,7 @@ export function step(s: GameState, cfg: GameConfig, dt: number): void {
     // Wave cleared: back to preparation for the next one.
     releaseMortars(s);
     s.shells = [];
+    s.spits = [];
     s.bombs = [];
     reviveSurvivors(s, cfg);
     // The truck that left this wave comes back next wave; a wrecked one is replaced.
@@ -2147,15 +2176,105 @@ function attackTick(e: Enemy, cooldown: number, dt: number): boolean {
  * intact structure (only when no open route exists), they attack that
  * structure until it falls to rubble.
  */
+/** Whether a boomer is touching the stronghold, something built (not a trap), the open truck or a survivor. */
+function boomerTouching(s: GameState, cfg: GameConfig, e: Enemy, shGap: number): boolean {
+  const r = cfg.enemies[e.type].radius;
+  if (shGap <= 4) return true;
+  for (const st of s.structures) {
+    if (st.destroyed || isTrap(st.kind)) continue;
+    if (Math.hypot(st.x - e.x, st.y - e.y) <= r + 30) return true;
+  }
+  if (truckExposed(s) && Math.hypot(s.truck.x - e.x, s.truck.y - e.y) <= r + cfg.truck.width / 2 + 4) return true;
+  return s.survivors.some((v) => !v.downed && Math.hypot(v.x - e.x, v.y - e.y) <= r + 12);
+}
+
+/** A boomer goes off: everything solid within its blast is hurt, and it is gone (no kill, no drop). */
+function boomerExplode(s: GameState, cfg: GameConfig, e: Enemy): void {
+  const b = cfg.enemies[e.type].blast!;
+  e.hp = 0;
+  s.blasts.push({ x: e.x, y: e.y, r: b.radius, life: BLAST_SECONDS, kind: "acid" });
+  if (s.splats.length >= 140) s.splats.shift();
+  s.splats.push({ x: e.x, y: e.y, type: e.type, shape: e.id, life: SPLAT_SECONDS });
+  for (const st of s.structures) {
+    if (st.destroyed) continue;
+    if (Math.hypot(st.x - e.x, st.y - e.y) <= b.radius + 20) damageStructure(s, st, b.damage);
+  }
+  if (distanceToStronghold(s, e.x, e.y) <= b.radius && s.boost?.kind !== "shield") {
+    s.stronghold.hp -= b.damage;
+    s.damageTaken += b.damage;
+  }
+  if (truckExposed(s) && Math.hypot(s.truck.x - e.x, s.truck.y - e.y) <= b.radius) s.truck.hp -= b.damage;
+  for (const v of s.survivors) if (!v.downed && Math.hypot(v.x - e.x, v.y - e.y) <= b.radius) v.hp -= b.damage;
+}
+
+/**
+ * Spitter: if a weapon or wall (not a trap) is within range, it stands still
+ * and lobs acid at the nearest. Returns whether it acted.
+ */
+function spitterAct(s: GameState, e: Enemy, sp: { range: number; damage: number; cooldown: number; speed: number }, dt: number): boolean {
+  let target: Structure | null = null;
+  let best = sp.range;
+  for (const st of s.structures) {
+    if (st.destroyed || isTrap(st.kind)) continue;
+    const d = Math.hypot(st.x - e.x, st.y - e.y);
+    if (d < best) {
+      best = d;
+      target = st;
+    }
+  }
+  // With nothing in range a spitter walks on and claws like the rest.
+  if (!target) return false;
+  e.attacking = true;
+  if (attackTick(e, sp.cooldown, dt)) {
+    const tx = target.x;
+    const ty = target.y;
+    const flight = Math.max(0.25, Math.hypot(tx - e.x, ty - e.y) / sp.speed);
+    if (s.spits.length < 120) s.spits.push({ sx: e.x, sy: e.y, tx, ty, total: flight, left: flight, damage: sp.damage, target: target.id });
+  }
+  return true;
+}
+
+/** Acid globs land on what they were aimed at (if it is still standing). */
+function stepSpits(s: GameState, dt: number): void {
+  if (s.spits.length === 0) return;
+  const kept: Spit[] = [];
+  for (const g of s.spits) {
+    g.left -= dt;
+    if (g.left > 0) {
+      kept.push(g);
+      continue;
+    }
+    const st = s.structures.find((x) => x.id === g.target);
+    if (st && !st.destroyed) damageStructure(s, st, g.damage);
+  }
+  s.spits = kept;
+}
+
 function stepEnemies(s: GameState, cfg: GameConfig, dt: number): void {
   // One field per step: hits during this step take effect next step.
   const field = pathField(s, cfg);
   const truck = s.truck;
   const exposed = truckExposed(s);
+  const screamers = s.enemies.filter((x) => x.hp > 0 && cfg.enemies[x.type].aura);
   for (const e of s.enemies) {
     if (e.hp <= 0) continue;
-    const w = cfg.enemies[e.type];
+    const base = cfg.enemies[e.type];
+    // A screamer nearby speeds the others up.
+    let boost = 0;
+    for (const sc of screamers) {
+      const a = cfg.enemies[sc.type].aura!;
+      if (sc !== e && Math.hypot(sc.x - e.x, sc.y - e.y) <= a.radius) boost = Math.max(boost, a.speedBoost);
+    }
+    const w = boost > 0 ? { ...base, speed: base.speed * (1 + boost) } : base;
+    e.boosted = boost > 0;
     const shGap = distanceToStronghold(s, e.x, e.y) - w.radius;
+    // A boomer explodes on reaching anything solid.
+    if (w.blast && boomerTouching(s, cfg, e, shGap)) {
+      boomerExplode(s, cfg, e);
+      continue;
+    }
+    // A spitter stops in range of a weapon or wall and lobs acid at it.
+    if (w.spit && spitterAct(s, e, w.spit, dt)) continue;
     // A survivor within reach gets attacked by whoever is passing.
     if (shGap > 0 && s.survivors.length > 0 && cfg.survivors.chasers.includes(e.type)) {
       let prey: Survivor | null = null;
@@ -2790,7 +2909,8 @@ function stepProjectiles(s: GameState, cfg: GameConfig, dt: number): void {
       const dy = e.y - p.y;
       const hitR = cfg.enemies[e.type].radius + cfg.projectile.radius;
       if (dx * dx + dy * dy <= hitR * hitR) {
-        damageEnemy(s, cfg, e, p.damage, p.by);
+        // Armour turns most of a bullet aside.
+        damageEnemy(s, cfg, e, p.damage * (cfg.enemies[e.type].bulletFactor ?? 1), p.by);
         hit = true;
         break;
       }

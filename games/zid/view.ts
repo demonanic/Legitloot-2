@@ -516,15 +516,33 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   drawTruck(ctx, cfg, s);
   for (const v of s.survivors) drawSurvivor(ctx, cfg, s, v);
 
+  // Screamer auras first, under everyone: faint rings pulsing outward.
+  for (const e of s.enemies) {
+    const a = cfg.enemies[e.type].aura;
+    if (!a) continue;
+    for (let i = 0; i < 2; i++) {
+      const k = ((s.time * 0.8 + i * 0.5 + e.id * 0.13) % 1 + 1) % 1;
+      ctx.strokeStyle = `rgba(190,150,230,${(0.35 * (1 - k)).toFixed(3)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, a.radius * k, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
   for (const e of s.enemies) {
     const r = cfg.enemies[e.type].radius;
-    ctx.fillStyle = e.attacking ? C.walkerAttack : e.type === "runner" ? C.runner : e.type === "brute" ? C.brute : C.walker;
-    ctx.strokeStyle = C.walkerEdge;
-    ctx.lineWidth = e.type === "brute" ? 4 : 3;
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    if (e.boosted) {
+      // Sped up by a screamer: violet speed streaks.
+      ctx.strokeStyle = "rgba(190,150,230,0.55)";
+      ctx.lineWidth = 2;
+      for (const off of [-0.5, 0.5]) {
+        ctx.beginPath();
+        ctx.moveTo(e.x + off * r, e.y + r + 2);
+        ctx.lineTo(e.x + off * r, e.y + r + 9);
+        ctx.stroke();
+      }
+    }
+    drawZombie(ctx, cfg, s, e, r);
     if (e.burn && e.burn > 0) {
       // On fire: flickering flames licking up from the body.
       for (let i = 0; i < 3; i++) {
@@ -595,7 +613,21 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
     ctx.arc(x, y, 7, 0, Math.PI * 2);
     ctx.fill();
   }
-  for (const b of s.blasts) drawBlast(ctx, b.x, b.y, b.r, BLAST_SECONDS - b.life);
+  // Acid globs: a green blob on a low arc, with its shadow on the ground.
+  for (const g of s.spits) {
+    const t = 1 - g.left / g.total;
+    const x = g.sx + (g.tx - g.sx) * t;
+    const y = g.sy + (g.ty - g.sy) * t;
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + 4, 5, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#b6e34a";
+    ctx.beginPath();
+    ctx.arc(x, y - Math.sin(Math.PI * t) * 40, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (const b of s.blasts) drawBlast(ctx, b.x, b.y, b.r, BLAST_SECONDS - b.life, b.kind === "acid");
 
   // Supplies picked up from kills: a coin and "+N" floating up.
   ctx.textAlign = "center";
@@ -1238,7 +1270,21 @@ function drawMortar(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState
 }
 
 /** A landed shell: flash, shockwave ring, flying debris, then smoke. */
-function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, age: number): void {
+function drawBlast(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, age: number, acid = false): void {
+  if (acid) {
+    // A boomer's burst: a green flash, a ring, and a spreading acid cloud.
+    const k = Math.min(1, age / BLAST_SECONDS);
+    ctx.fillStyle = `rgba(190,235,80,${(0.6 * (1 - k)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (0.4 + 0.7 * k), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = `rgba(150,200,60,${(0.8 * (1 - k)).toFixed(3)})`;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (0.5 + 0.6 * k), 0, Math.PI * 2);
+    ctx.stroke();
+    return;
+  }
   if (age < 0.2) {
     const k = age / 0.2;
     ctx.fillStyle = `rgba(255,236,170,${0.85 * (1 - k)})`;
@@ -2365,4 +2411,75 @@ function drawRailgun(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameStat
     ctx.fill();
   }
   drawSmoke(ctx, s, bx + cos * len, by + sin * len, t.lastShot, 1.2, 6);
+}
+
+/** One zombie, by type: each has its own shape so you can read a wave at a glance. */
+function drawZombie(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: GameState, e: GameState["enemies"][number], r: number): void {
+  const body = (fill: string, width: number) => {
+    ctx.fillStyle = e.attacking ? C.walkerAttack : fill;
+    ctx.strokeStyle = C.walkerEdge;
+    ctx.lineWidth = width;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  };
+  switch (e.type) {
+    case "armored": {
+      body("#6f7882", 3);
+      // Armour plates: four thick arcs, and a visor slit.
+      ctx.strokeStyle = "#3a4048";
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + 0.3;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, r - 3, a, a + 1.0);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#c9d2da";
+      ctx.fillRect(e.x - r * 0.45, e.y - 2, r * 0.9, 3);
+      return;
+    }
+    case "spitter": {
+      // A swollen acid sac behind, glowing brighter as it winds up to spit.
+      const sp = cfg.enemies.spitter.spit!;
+      const ready = e.attacking ? Math.max(0, 1 - e.attackCooldown / sp.cooldown) : 0.2;
+      ctx.fillStyle = `rgba(170,210,60,${(0.35 + 0.5 * ready).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y - r * 0.6, r * (0.7 + 0.25 * ready), 0, Math.PI * 2);
+      ctx.fill();
+      body("#8fa23a", 3);
+      ctx.fillStyle = "#e3f27a";
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + r * 0.25, r * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    case "boomer": {
+      // Bloated, with pustules that pulse faster the more it is hurt.
+      const hurt = 1 - e.hp / e.maxHp;
+      const pulse = 0.5 + 0.5 * Math.sin(s.time * (5 + 15 * hurt) + e.id);
+      body("#9a8a3c", 3);
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + e.id;
+        ctx.fillStyle = `rgba(220,240,90,${(0.5 + 0.5 * pulse).toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(e.x + Math.cos(a) * r * 0.5, e.y + Math.sin(a) * r * 0.5, r * (0.22 + 0.08 * pulse), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      return;
+    }
+    case "screamer": {
+      body("#a58fbf", 3);
+      // Wide-open mouth.
+      const open = 0.5 + 0.5 * Math.sin(s.time * 9 + e.id);
+      ctx.fillStyle = "#2a1f33";
+      ctx.beginPath();
+      ctx.ellipse(e.x, e.y + 1, r * 0.35, r * (0.25 + 0.25 * open), 0, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+    default:
+      body(e.type === "runner" ? C.runner : e.type === "brute" ? C.brute : C.walker, e.type === "brute" ? 4 : 3);
+  }
 }

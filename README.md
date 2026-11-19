@@ -37,6 +37,15 @@ The smallest playable proof, fully offline:
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
 
+### New zombies
+
+- **Armored** (from wave 5): slow and tough. Bullets do only half damage; shells, fire, arcs, beams and blasts hit in full.
+- **Spitter** (from wave 4): stops about two tiles from your nearest weapon or wall and lobs acid at it every couple of seconds. Kill it from range or it slowly wears your front line down.
+- **Boomer** (from wave 6): explodes on reaching anything you built, a survivor or the open truck, hitting everything nearby for 70. Shot dead first, it still bursts, but the burst only hurts other zombies (and sets off other boomers).
+- **Screamer** (from wave 7): rare. Zombies within its ring move 40% faster. Kill it first.
+- Each type has its own look; boosted zombies show speed streaks, and acid globs fly in green.
+- To make room for them, zombie health grows a little more slowly per wave (22% instead of 24%). A scripted player still falls around wave 20 (range 15–23 over 24 seeds), the same as before.
+
 ### Railgun
 
 - **Railgun** (220, base level 6; one allowed), on the "More weapons" page (now titled "Build a special weapon").

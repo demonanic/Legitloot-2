@@ -3,7 +3,7 @@
  * rolls actual spawn positions and types from this plan with its seeded RNG.
  */
 
-import type { EnemyType, GameConfig } from "./config.js";
+import { ENEMY_TYPES, type EnemyType, type GameConfig } from "./config.js";
 
 export interface WavePlan {
   wave: number;
@@ -29,10 +29,14 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
   const w = cfg.waves;
   const runner = share(wave, w.runnerFrom, w.runnerShareStep, w.runnerShareMax);
   const brute = share(wave, w.bruteFrom, w.bruteShareStep, w.bruteShareMax);
+  const armored = share(wave, w.armoredFrom, w.armoredShareStep, w.armoredShareMax);
+  const spitter = share(wave, w.spitterFrom, w.spitterShareStep, w.spitterShareMax);
+  const boomer = share(wave, w.boomerFrom, w.boomerShareStep, w.boomerShareMax);
+  const screamer = share(wave, w.screamerFrom, w.screamerShareStep, w.screamerShareMax);
   return {
     wave,
     count: w.baseCount + w.countPerWave * (wave - 1),
-    mix: { walker: 1 - runner - brute, runner, brute },
+    mix: { walker: 1 - runner - brute - armored - spitter - boomer - screamer, runner, brute, armored, spitter, boomer, screamer },
     // Compounding: turret firepower grows with accumulated income (roughly
     // quadratic in waves), so linear health growth is outpaced and runs never end.
     hpMultiplier: Math.pow(1 + w.hpGrowthPerWave, wave - 1),
@@ -51,7 +55,7 @@ export function wavePlan(cfg: GameConfig, wave: number): WavePlan {
 export function waveThreat(cfg: GameConfig, wave: number): number {
   const p = wavePlan(cfg, wave);
   let threat = 0;
-  for (const t of ["walker", "runner", "brute"] as const) {
+  for (const t of ENEMY_TYPES) {
     const e = cfg.enemies[t];
     const n = p.count * p.mix[t];
     const hp = e.maxHp * p.hpMultiplier;

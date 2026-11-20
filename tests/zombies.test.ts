@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type EnemyType } from "../games/zid/config.js";
-import { buildTurret, createState, damageEnemy, startWaveNow, step, type Enemy, type GameState } from "../games/zid/sim.js";
-import { wavePlan } from "../games/zid/waves.js";
+import { baseConfig, type EnemyType } from "../games/zvhm/config.js";
+import { buildTurret, createState, damageEnemy, startWaveNow, step, type Enemy, type GameState } from "../games/zvhm/sim.js";
+import { wavePlan } from "../games/zvhm/waves.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

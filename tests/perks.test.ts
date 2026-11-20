@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type GameConfig } from "../games/zid/config.js";
-import { PERKS, drawPerks, eligiblePerks, perkDef, weaponPerkScale, type PerkId } from "../games/zid/perks.js";
+import { baseConfig, type GameConfig } from "../games/zvhm/config.js";
+import { PERKS, drawPerks, eligiblePerks, perkDef, weaponPerkScale, type PerkId } from "../games/zvhm/perks.js";
 import {
   buildBarricade,
   buildMortar,
@@ -16,7 +16,7 @@ import {
   turretStats,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig } from "../games/zid/config.js";
-import { buildableTiles } from "../games/zid/grid.js";
-import { panelModel } from "../games/zid/panel.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { buildableTiles } from "../games/zvhm/grid.js";
+import { panelModel } from "../games/zvhm/panel.js";
 import {
   buildBarricade,
   buildMortar,
@@ -21,7 +21,7 @@ import {
   upgradeBase,
   upgradeTurret,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

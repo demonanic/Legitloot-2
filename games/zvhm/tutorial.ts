@@ -50,8 +50,8 @@ const WEAPONS = ["machine-gun", "gatling", "rocket", "mortar", "shotgun", "flame
 export const TIPS: readonly Tip[] = [
   {
     id: "welcome",
-    title: "Welcome, survivor",
-    body: "Zombies attack in waves from every side. Keep the stronghold in the middle standing. If its health reaches zero, the run is over.",
+    title: "Welcome to Z.V.H.M.",
+    body: "This is Zombies vs Heavy Metal. Zombies attack in waves from every side. Keep the stronghold in the middle standing. If its health reaches zero, the run is over.",
     kind: "info",
     guided: true,
     where: "middle",
@@ -311,7 +311,7 @@ export function cardLayout(cfg: GameConfig, id: TipId, mode: { kind: "guided" } 
     card: { x, y, w, h },
     title: tip.title,
     lines,
-    counter: mode.kind === "help" ? `${mode.index + 1} of ${TIPS.length}` : "",
+    counter: mode.kind === "help" ? `Z.V.H.M. ${mode.index + 1}/${TIPS.length}` : "",
     buttons,
   };
 }

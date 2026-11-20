@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig } from "../games/zid/config.js";
-import { panelModel } from "../games/zid/panel.js";
-import { wavePlan } from "../games/zid/waves.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { panelModel } from "../games/zvhm/panel.js";
+import { wavePlan } from "../games/zvhm/waves.js";
 import {
   activateBoost,
   barrelCount,
@@ -15,7 +15,7 @@ import {
   upgradeTurret,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg = { ...baseConfig, pickups: { ...baseConfig.pickups, everyMax: 0 } };
 const DT = 1 / 30;
@@ -259,7 +259,7 @@ test("menu: a third build page offers Shotgun and Flamethrower; pages cycle", ()
 
 // --- Tesla coil ------------------------------------------------------------------
 
-import { teslaChain, turretStats } from "../games/zid/sim.js";
+import { teslaChain, turretStats } from "../games/zvhm/sim.js";
 
 function coil(s: GameState) {
   s.phase = "prep";
@@ -373,7 +373,7 @@ test("tesla: when the bolt runs out of zombies ahead, it forks back to one near 
 
 // --- Railgun ---------------------------------------------------------------------
 
-import { railgunAim, railgunHits } from "../games/zid/sim.js";
+import { railgunAim, railgunHits } from "../games/zvhm/sim.js";
 
 function railgun(s: GameState) {
   s.phase = "prep";

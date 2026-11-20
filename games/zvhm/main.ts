@@ -41,6 +41,14 @@ import { createStressRun } from "./stress.js";
 import { createAudio } from "../../engine/audio/audio.js";
 import { MUSIC, SOUNDS, musicIntensity, soundEvents, soundSnapshot, weaponSounds, type SoundSnapshot } from "./sounds.js";
 import { currentCard, BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
+import { migrateSaves, saveKey } from "./storage.js";
+
+// Saves from before the rename (Zombie Invasion Defense → Zombies vs Heavy Metal) carry over.
+try {
+  migrateSaves(localStorage);
+} catch {
+  // Storage unavailable: nothing to carry over.
+}
 
 const params = new URLSearchParams(location.search);
 const stress = params.has("stress");
@@ -59,7 +67,7 @@ const renderer = createRenderer(canvas, {
 /** Survivors unlocked for good, kept in the browser alongside the Salvage stockpile. */
 function loadSurvivors(): string[] {
   try {
-    const raw = JSON.parse(localStorage.getItem("zid.survivors") ?? "[]");
+    const raw = JSON.parse(localStorage.getItem(saveKey("survivors")) ?? "[]");
     return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
@@ -70,14 +78,14 @@ let state: GameState = newRun();
 // The build menu remembers its last page, so placing several traps in a row is quick.
 function savedSound(): boolean {
   try {
-    return localStorage.getItem("zid.sound") !== "off";
+    return localStorage.getItem(saveKey("sound")) !== "off";
   } catch {
     return true;
   }
 }
 function savedRanges(): boolean {
   try {
-    return localStorage.getItem("zid.ranges") !== "off";
+    return localStorage.getItem(saveKey("ranges")) !== "off";
   } catch {
     return true;
   }
@@ -85,7 +93,7 @@ function savedRanges(): boolean {
 /** The permanent Salvage stockpile lives in the browser, so it survives defeat and closing the page. */
 function loadSalvage(): number {
   try {
-    const n = Number(localStorage.getItem("zid.salvage"));
+    const n = Number(localStorage.getItem(saveKey("salvage")));
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   } catch {
     return 0;
@@ -93,7 +101,7 @@ function loadSalvage(): number {
 }
 function saveSalvage(n: number): void {
   try {
-    localStorage.setItem("zid.salvage", String(n));
+    localStorage.setItem(saveKey("salvage"), String(n));
   } catch {
     // Storage unavailable: the stockpile just lasts for this visit.
   }
@@ -129,7 +137,7 @@ const view: ViewState = {
 /** Tutorial progress lives in the browser too, so the guided start runs once per player. */
 function loadProgress(): TutorialProgress {
   try {
-    return parseProgress(localStorage.getItem("zid.tutorial"));
+    return parseProgress(localStorage.getItem(saveKey("tutorial")));
   } catch {
     return parseProgress(null);
   }
@@ -137,7 +145,7 @@ function loadProgress(): TutorialProgress {
 let progress: TutorialProgress = loadProgress();
 function saveProgress(): void {
   try {
-    localStorage.setItem("zid.tutorial", JSON.stringify(progress));
+    localStorage.setItem(saveKey("tutorial"), JSON.stringify(progress));
   } catch {
     // Storage unavailable: tips may show again next visit.
   }
@@ -198,7 +206,7 @@ function runPanelAction(action: PanelAction): void {
       saveSalvage(view.salvage);
       unlockedSurvivors.push(def.id);
       try {
-        localStorage.setItem("zid.survivors", JSON.stringify(unlockedSurvivors));
+        localStorage.setItem(saveKey("survivors"), JSON.stringify(unlockedSurvivors));
       } catch {
         // Storage unavailable: the unlock just lasts for this visit.
       }
@@ -287,7 +295,7 @@ const regions = uiRegions(cfg, () => state, () => view, {
     view.soundOn = !view.soundOn;
     audio.setMuted(!view.soundOn);
     try {
-      localStorage.setItem("zid.sound", view.soundOn ? "on" : "off");
+      localStorage.setItem(saveKey("sound"), view.soundOn ? "on" : "off");
     } catch {
       // Storage unavailable: the choice just lasts for this visit.
     }
@@ -295,7 +303,7 @@ const regions = uiRegions(cfg, () => state, () => view, {
   toggleRanges: () => {
     view.showRanges = !view.showRanges;
     try {
-      localStorage.setItem("zid.ranges", view.showRanges ? "on" : "off");
+      localStorage.setItem(saveKey("ranges"), view.showRanges ? "on" : "off");
     } catch {
       // Storage unavailable: the choice just lasts for this visit.
     }
@@ -420,7 +428,7 @@ bindVisibility(loop, document, (hidden) => audio.setPaused(hidden));
 loop.start();
 
 // Exposed for automated browser checks only; not a gameplay API.
-(window as unknown as { __zid: unknown }).__zid = {
+(window as unknown as { __zvhm: unknown }).__zvhm = {
   get state() {
     return state;
   },

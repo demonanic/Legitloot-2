@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, ENEMY_TYPES, type GameConfig } from "../games/zid/config.js";
-import { buildOnlyPlayer, passivePlayer, playRun, sensiblePlayer } from "../games/zid/bots.js";
+import { baseConfig, ENEMY_TYPES, type GameConfig } from "../games/zvhm/config.js";
+import { buildOnlyPlayer, passivePlayer, playRun, sensiblePlayer } from "../games/zvhm/bots.js";
 import {
   buildTurret,
   createState,
@@ -15,8 +15,8 @@ import {
   upgradeTurret,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
-import { wavePlan, waveThreat } from "../games/zid/waves.js";
+} from "../games/zvhm/sim.js";
+import { wavePlan, waveThreat } from "../games/zvhm/waves.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

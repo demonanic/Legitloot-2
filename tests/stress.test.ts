@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, stressConfig } from "../games/zid/config.js";
-import { buildTurret, createState, startWaveNow, step } from "../games/zid/sim.js";
-import { createStressRun, STRESS_TURRET_TILES } from "../games/zid/stress.js";
+import { baseConfig, stressConfig } from "../games/zvhm/config.js";
+import { buildTurret, createState, startWaveNow, step } from "../games/zvhm/sim.js";
+import { createStressRun, STRESS_TURRET_TILES } from "../games/zvhm/stress.js";
 
 const DT = 1 / 30;
 

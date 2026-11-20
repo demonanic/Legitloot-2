@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type GameConfig } from "../games/zid/config.js";
-import { panelModel } from "../games/zid/panel.js";
+import { baseConfig, type GameConfig } from "../games/zvhm/config.js";
+import { panelModel } from "../games/zvhm/panel.js";
 import {
   checkSendTruck,
   createState,
@@ -12,7 +12,7 @@ import {
   truckParking,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const DT = 1 / 30;
 /** A config whose runs always end one way, with no pickups to muddy the Supplies count. */
@@ -297,8 +297,8 @@ test("menu: the base menu offers a salvage run and shows what the truck is doing
 
 // --- Route planning and collisions -----------------------------------------------
 
-import { buildStructure, planTruckPath, truckTouches } from "../games/zid/sim.js";
-import { tileStatus } from "../games/zid/grid.js";
+import { buildStructure, planTruckPath, truckTouches } from "../games/zvhm/sim.js";
+import { tileStatus } from "../games/zvhm/grid.js";
 
 /** Drive a departure to the end, checking the body never touches what it must avoid. */
 function driveOut(s: GameState, cfg: GameConfig, level: 1 | 2): { steps: number; maxAccel: number; maxBrake: number } {
@@ -432,7 +432,7 @@ test("truck: coming home it ends squarely in its bay, facing east, without touch
 
 // --- Salvage: what survives defeat --------------------------------------------------
 
-import { salvageUsable, useSalvage } from "../games/zid/sim.js";
+import { salvageUsable, useSalvage } from "../games/zvhm/sim.js";
 
 test("salvage: a share of every unloaded haul is banked; an empty or destroyed run banks nothing", () => {
   const cfg = SUCCESS;

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig } from "../games/zid/config.js";
-import { tileStatus, tileAt } from "../games/zid/grid.js";
-import { playRun, sensiblePlayer } from "../games/zid/bots.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { tileStatus, tileAt } from "../games/zvhm/grid.js";
+import { playRun, sensiblePlayer } from "../games/zvhm/bots.js";
 import {
   activateBoost,
   buildTurret,
@@ -13,7 +13,7 @@ import {
   startWaveNow,
   step,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;
@@ -208,7 +208,7 @@ test("balance: with pickups and boosts, the sensible player still falls inside t
 });
 
 test("barrels: each Speed level adds one, and they fire in turn", async () => {
-  const { barrelCount, lastBarrel, upgradeTurret, buildStructure } = await import("../games/zid/sim.js");
+  const { barrelCount, lastBarrel, upgradeTurret, buildStructure } = await import("../games/zvhm/sim.js");
   const s = createState(cfg, 1);
   s.currency = 10_000;
   s.stronghold.level = 3;
@@ -230,7 +230,7 @@ test("barrels: each Speed level adds one, and they fire in turn", async () => {
 });
 
 test("barrels: a multi-barrel gun still hits what it aims at", async () => {
-  const { upgradeTurret, buildStructure } = await import("../games/zid/sim.js");
+  const { upgradeTurret, buildStructure } = await import("../games/zvhm/sim.js");
   const s = createState({ ...cfg, pickups: { ...cfg.pickups, everyMax: 0 } }, 1);
   s.currency = 10_000;
   const mg = buildStructure(s, cfg, "machine-gun", 4, 5);

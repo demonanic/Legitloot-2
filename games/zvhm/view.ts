@@ -1000,6 +1000,9 @@ export function draw(ctx: CanvasRenderingContext2D, s: GameState, cfg: GameConfi
   if (s.phase === "lost") {
     ctx.fillStyle = "rgba(8,9,8,0.78)";
     ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = C.quiet;
+    ctx.font = "800 24px system-ui, sans-serif";
+    ctx.fillText("ZOMBIES VS HEAVY METAL", W / 2, H / 2 - 190);
     ctx.fillStyle = C.bad;
     ctx.font = "900 72px system-ui, sans-serif";
     ctx.fillText("OVERRUN", W / 2, H / 2 - 120);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type GameConfig } from "../games/zid/config.js";
-import { wavePlan } from "../games/zid/waves.js";
+import { baseConfig, type GameConfig } from "../games/zvhm/config.js";
+import { wavePlan } from "../games/zvhm/waves.js";
 import {
   buildTurret,
   choosePerk,
@@ -12,7 +12,7 @@ import {
   step,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const DT = 1 / 30;
 /** The two tiles beside the stronghold, used where the old fixed mounts were. */

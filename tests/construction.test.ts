@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig } from "../games/zid/config.js";
-import { buildableTiles, forgivingTile, gridSize, pointInPolygon, tileAt, tileCenter, tileOrigin, tileStatus } from "../games/zid/grid.js";
-import { buildTurret, checkBuild, createState, startWaveNow, step, structureAt } from "../games/zid/sim.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { buildableTiles, forgivingTile, gridSize, pointInPolygon, tileAt, tileCenter, tileOrigin, tileStatus } from "../games/zvhm/grid.js";
+import { buildTurret, checkBuild, createState, startWaveNow, step, structureAt } from "../games/zvhm/sim.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

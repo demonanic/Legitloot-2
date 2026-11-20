@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type GameConfig } from "../games/zid/config.js";
-import { panelModel } from "../games/zid/panel.js";
-import { playRun, sensiblePlayer } from "../games/zid/bots.js";
+import { baseConfig, type GameConfig } from "../games/zvhm/config.js";
+import { panelModel } from "../games/zvhm/panel.js";
+import { playRun, sensiblePlayer } from "../games/zvhm/bots.js";
 import {
   addSurvivor,
   buildStructure,
@@ -13,7 +13,7 @@ import {
   survivorDef,
   type Enemy,
   type GameState,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg: GameConfig = { ...baseConfig, pickups: { ...baseConfig.pickups, everyMax: 0 } };
 const DT = 1 / 30;
@@ -284,7 +284,7 @@ test("attraction: walkers and runners turn toward a survivor from well away; bru
 
 // --- Levels ----------------------------------------------------------------------
 
-import { damageEnemy, survivorWeapon, SURVIVOR_MAX_LEVEL } from "../games/zid/sim.js";
+import { damageEnemy, survivorWeapon, SURVIVOR_MAX_LEVEL } from "../games/zvhm/sim.js";
 
 /** Hand a survivor `n` kills. */
 function giveKills(s: GameState, id: string, n: number): void {

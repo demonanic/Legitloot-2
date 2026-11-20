@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type EnemyType } from "../games/zid/config.js";
-import { gridSize, overlapsStronghold } from "../games/zid/grid.js";
-import { nextTile, pathField } from "../games/zid/path.js";
-import { panelModel } from "../games/zid/panel.js";
+import { baseConfig, type EnemyType } from "../games/zvhm/config.js";
+import { gridSize, overlapsStronghold } from "../games/zvhm/grid.js";
+import { nextTile, pathField } from "../games/zvhm/path.js";
+import { panelModel } from "../games/zvhm/panel.js";
 import {
   buildBarricade,
   buildTurret,
@@ -21,7 +21,7 @@ import {
   upgradeTurret,
   type GameState,
   type Structure,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 // Pathing tests wall the stronghold in completely, so they run without the truck bay (which nothing can be built on).
 const cfg = { ...baseConfig, construction: { ...baseConfig.construction, truckBay: [] } };

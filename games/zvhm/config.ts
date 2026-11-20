@@ -1,5 +1,5 @@
 /**
- * Zombie Invasion Defense (working title) — game configuration.
+ * Zombies vs Heavy Metal (Z.V.H.M.) — game configuration.
  *
  * Every number here is a PROVISIONAL balance value, not a locked decision.
  * Values marked "tuned" were chosen with scripts/balance.mjs against the

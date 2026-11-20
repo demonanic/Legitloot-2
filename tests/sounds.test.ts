@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAudio, createThrottle } from "../engine/audio/audio.js";
-import { baseConfig } from "../games/zid/config.js";
-import { buildMortar, buildTurret, choosePerk, createState, startWaveNow, step, type GameState } from "../games/zid/sim.js";
-import { MUSIC, SOUNDS, musicIntensity, soundEvents, soundSnapshot, weaponSounds, type SoundName } from "../games/zid/sounds.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { buildMortar, buildTurret, choosePerk, createState, startWaveNow, step, type GameState } from "../games/zvhm/sim.js";
+import { MUSIC, SOUNDS, musicIntensity, soundEvents, soundSnapshot, weaponSounds, type SoundName } from "../games/zvhm/sounds.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

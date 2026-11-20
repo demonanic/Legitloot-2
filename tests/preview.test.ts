@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, ENEMY_TYPES, type EnemyType } from "../games/zid/config.js";
-import { ZOMBIE_NAMES, ZOMBIE_TIPS, spawnEdge, wavePreview } from "../games/zid/preview.js";
-import { createState, startWaveNow, step, type Spawn } from "../games/zid/sim.js";
-import { dueTip } from "../games/zid/tutorial.js";
+import { baseConfig, ENEMY_TYPES, type EnemyType } from "../games/zvhm/config.js";
+import { ZOMBIE_NAMES, ZOMBIE_TIPS, spawnEdge, wavePreview } from "../games/zvhm/preview.js";
+import { createState, startWaveNow, step, type Spawn } from "../games/zvhm/sim.js";
+import { dueTip } from "../games/zvhm/tutorial.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

@@ -2,9 +2,9 @@
 // reports survival, enemy counts, stronghold damage, supplies and difficulty
 // steps per wave. Usage (after `npm run build` or `npm test`):
 //   node scripts/balance.mjs [seeds=24]
-import { baseConfig as cfg } from "../dist/games/zid/config.js";
-import { buildOnlyPlayer, passivePlayer, playRun, sensiblePlayer } from "../dist/games/zid/bots.js";
-import { wavePlan, waveThreat } from "../dist/games/zid/waves.js";
+import { baseConfig as cfg } from "../dist/games/zvhm/config.js";
+import { buildOnlyPlayer, passivePlayer, playRun, sensiblePlayer } from "../dist/games/zvhm/bots.js";
+import { wavePlan, waveThreat } from "../dist/games/zvhm/waves.js";
 
 const SEEDS = Number(process.argv[2] ?? 24);
 const MAX_WAVE = 40;

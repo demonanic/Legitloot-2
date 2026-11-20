@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig } from "../games/zid/config.js";
-import { buildStructure, choosePerk, createState, startWaveNow, step } from "../games/zid/sim.js";
+import { baseConfig } from "../games/zvhm/config.js";
+import { buildStructure, choosePerk, createState, startWaveNow, step } from "../games/zvhm/sim.js";
 import {
   CARD_CHARS,
   NEW_PROGRESS,
@@ -16,7 +16,7 @@ import {
   wrap,
   type TipId,
   type TutorialProgress,
-} from "../games/zid/tutorial.js";
+} from "../games/zvhm/tutorial.js";
 
 const cfg = { ...baseConfig, pickups: { ...baseConfig.pickups, everyMax: 0 } };
 const GUIDED: TipId[] = ["welcome", "supplies", "build", "manage", "start"];
@@ -139,7 +139,7 @@ test("cards: guided info steps offer Got it and Skip; the do step offers only Sk
   assert.deepEqual(first.buttons.map((b) => [b.id, b.enabled]), [["back", false], ["close", true], ["next", true]]);
   const last = cardLayout(cfg, TIPS[TIPS.length - 1]!.id, { kind: "help", index: TIPS.length - 1 });
   assert.equal(last.buttons.find((b) => b.id === "next")!.enabled, false);
-  assert.equal(first.counter, `1 of ${TIPS.length}`);
+  assert.equal(first.counter, `Z.V.H.M. 1/${TIPS.length}`);
   // The do step sits at the top, leaving the field near the stronghold free to tap.
   assert.ok(cardLayout(cfg, "build", { kind: "guided" }).card.y + cardLayout(cfg, "build", { kind: "guided" }).card.h < cfg.stronghold.y - 200);
 });

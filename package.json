@@ -2,7 +2,7 @@
   "name": "legitloot-2",
   "private": true,
   "version": "0.1.0",
-  "description": "LegitLoot game framework and Reference Game 01 (Zombie Invasion Defense, working title)",
+  "description": "LegitLoot game framework and its first game, Zombies vs Heavy Metal (Z.V.H.M.)",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-site.mjs",

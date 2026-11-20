@@ -1,6 +1,9 @@
-# legitloot-2
+# Zombies vs Heavy Metal (Z.V.H.M.)
 
-LegitLoot's game framework and Reference Game 01, **Zombie Invasion Defense** (working title).
+LegitLoot's game framework and its first game, **Zombies vs Heavy Metal** (short form **Z.V.H.M.**). It was developed as "Zombie Invasion Defense" (working title) before getting its official name.
+
+- Play: https://legitloot.site/zombies-vs-heavy-metal (on LegitLoot) or https://demonanic.github.io/Legitloot-2/ (the game on its own)
+- Code: `engine/` (reusable, no game concepts) and `games/zvhm/` (this game)
 
 This repo is separate from the live `legitloot.site` code on purpose: nothing here touches the existing site, its Supabase projects, or player data.
 
@@ -14,7 +17,7 @@ The smallest playable proof, fully offline:
 - One run currency (label "Supplies" is a placeholder name). Invalid builds never deduct it.
 - Fixed 30 Hz simulation, rendering up to 60 FPS, pauses when the tab is hidden.
 - On-screen diagnostics (tap **FPS**).
-- Placeholder art only. All balance numbers are provisional and live in `games/zid/config.ts`.
+- Placeholder art only. All balance numbers are provisional and live in `games/zvhm/config.ts`.
 
 ### Challenge update
 
@@ -36,6 +39,12 @@ The smallest playable proof, fully offline:
 - **Mortar** (80): long range (440), but can't hit anything closer than 130. Shells take about a second to land and hit every zombie in the blast. Same Speed and Damage upgrades as the turret, at 1.5× the price; health, rubble, rebuild and recycle work the same way.
 - **Aiming:** on its own the mortar shells the thickest crowd it can reach. During an assault, tap the map to drop its shells there; tap the marker again to return to automatic. Mortars that can't reach the spot keep picking their own targets. The aim resets each wave.
 - **Earlier danger:** zombies move 30% faster, the machine gun's range is 200 (was 300), and from wave 2 part of each wave arrives in tight packs. A careful scripted player now takes hits from wave 1 and still falls around waves 11–15.
+
+### Official title: Zombies vs Heavy Metal
+
+- The game is now **Zombies vs Heavy Metal**, or **Z.V.H.M.** where space is short. That covers the browser tab, the tutorial welcome ("Welcome to Z.V.H.M."), the How to play counter, the end screen and these docs.
+- Code moved from `games/zid/` to `games/zvhm/`. The browser test hook is now `window.__zvhm`.
+- Browser saves are now `zvhm.*` (salvage, survivors, tutorial, sound, ranges). On first load, any old `zid.*` save is copied across once, so nobody loses Salvage, unlocked survivors, tutorial progress or settings. The old keys are left in place.
 
 ### Sound
 
@@ -85,7 +94,7 @@ The smallest playable proof, fully offline:
 
 ### Tutorial
 
-- **Guided start** for a first-time player (stored in the browser as `zid.tutorial`): welcome, Supplies, build your first turret (waits until you do), upgrade/repair/recycle, and starting the wave. The game is paused while each card is up. "Skip tutorial" ends it and stops automatic tips.
+- **Guided start** for a first-time player (stored in the browser as `zvhm.tutorial`): welcome, Supplies, build your first turret (waits until you do), upgrade/repair/recycle, and starting the wave. The game is paused while each card is up. "Skip tutorial" ends it and stops automatic tips.
 - **One-time tips** the first time each thing happens: the first wave, pickups, a full charge meter, mortars, survivors, the base menu after wave 1, the truck returning, having Salvage, and defeat.
 - **"?" button** (under Rings) opens a "How to play" reference that pages through every tip, any time.
 - The HUD now reads "Salvage N (kept)".
@@ -199,7 +208,7 @@ Not in this milestone: free placement (Zone B), other turrets, barricades, other
 engine/loop     fixed-step loop, lifecycle, visibility pause
 engine/render   Canvas 2D, letterboxing, screen→world coordinates
 engine/input    taps, UI-before-world routing
-games/zid       config (all numbers), pure simulation, drawing, entry point
+games/zvhm       config (all numbers), pure simulation, drawing, entry point
 tests           unit tests (node:test)
 public          index.html
 scripts         site assembly, engine isolation check, local server

@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { baseConfig, type EnemyType } from "../games/zid/config.js";
-import { pathField } from "../games/zid/path.js";
-import { panelModel } from "../games/zid/panel.js";
+import { baseConfig, type EnemyType } from "../games/zvhm/config.js";
+import { pathField } from "../games/zvhm/path.js";
+import { panelModel } from "../games/zvhm/panel.js";
 import {
   buildLimit,
   buildStructure,
@@ -20,7 +20,7 @@ import {
   type GameState,
   type Structure,
   type StructureKind,
-} from "../games/zid/sim.js";
+} from "../games/zvhm/sim.js";
 
 const cfg = baseConfig;
 const DT = 1 / 30;

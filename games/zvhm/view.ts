@@ -9,7 +9,7 @@ import { buildableTiles, gridSize, tileCenter, type Tile } from "./grid.js";
 import { panelModel, type BuildPage, type PanelAction, type PanelSlot } from "./panel.js";
 import { ZOMBIE_NAMES, ZOMBIE_TIPS, wavePreview } from "./preview.js";
 import { PERKS, perkDef, perkLevel, type PerkId } from "./perks.js";
-import { TIPS, cardLayout, tipById, type CardButtonId, type CardLayout, type TipHighlight, type TipId } from "./tutorial.js";
+import { TIPS, cardLayout, tipById, type CardButtonId, type CardLayout, type Measure, type TipHighlight, type TipId } from "./tutorial.js";
 import {
   BLAST_SECONDS,
   POPUP_SECONDS,
@@ -101,10 +101,41 @@ export interface ViewState {
   help: number | null;
 }
 
+/** Card body font: wrapping measures with exactly what gets drawn. */
+export const CARD_BODY_FONT = "500 25px system-ui, sans-serif";
+
+let bodyMeasure: Measure | undefined;
+let measureTried = false;
+/** Measures body text with the device's real font; undefined where there is no canvas (tests). */
+function cardMeasure(): Measure | undefined {
+  if (measureTried) return bodyMeasure;
+  measureTried = true;
+  try {
+    const ctx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    if (ctx) {
+      ctx.font = CARD_BODY_FONT;
+      const cache = new Map<string, number>();
+      bodyMeasure = (text) => {
+        let w = cache.get(text);
+        if (w === undefined) {
+          w = ctx.measureText(text).width;
+          if (cache.size > 2000) cache.clear();
+          cache.set(text, w);
+        }
+        return w;
+      };
+    }
+  } catch {
+    bodyMeasure = undefined;
+  }
+  return bodyMeasure;
+}
+
 /** The card on screen right now, if any (the reference wins over a tip). */
 export function currentCard(cfg: GameConfig, view: ViewState): CardLayout | null {
-  if (view.help !== null) return cardLayout(cfg, TIP_ORDER[view.help]!, { kind: "help", index: view.help });
-  if (view.tutorial) return cardLayout(cfg, view.tutorial.tip, view.tutorial.guided ? { kind: "guided" } : { kind: "tip" });
+  const m = cardMeasure();
+  if (view.help !== null) return cardLayout(cfg, TIP_ORDER[view.help]!, { kind: "help", index: view.help }, m);
+  if (view.tutorial) return cardLayout(cfg, view.tutorial.tip, view.tutorial.guided ? { kind: "guided" } : { kind: "tip" }, m);
   return null;
 }
 const TIP_ORDER: TipId[] = TIPS.map((t) => t.id);
@@ -1113,7 +1144,7 @@ function drawTutorialCard(ctx: CanvasRenderingContext2D, cfg: GameConfig, s: Gam
     ctx.textAlign = "left";
   }
   ctx.fillStyle = C.text;
-  ctx.font = "500 25px system-ui, sans-serif";
+  ctx.font = CARD_BODY_FONT;
   card.lines.forEach((line, i) => ctx.fillText(line, c.x + 28, c.y + 104 + i * 34));
   for (const b of card.buttons) button(ctx, b.rect, b.label, !b.enabled ? "disabled" : b.primary ? "primary" : "secondary");
 }

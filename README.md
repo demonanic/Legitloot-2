@@ -45,6 +45,7 @@ The smallest playable proof, fully offline:
 - The game is now **Zombies vs Heavy Metal**, or **Z.V.H.M.** where space is short. That covers the browser tab, the tutorial welcome ("Welcome to Z.V.H.M."), the How to play counter, the end screen and these docs.
 - Code moved from `games/zid/` to `games/zvhm/`. The browser test hook is now `window.__zvhm`.
 - Browser saves are now `zvhm.*` (salvage, survivors, tutorial, sound, ranges). On first load, any old `zid.*` save is copied across once, so nobody loses Salvage, unlocked survivors, tutorial progress or settings. The old keys are left in place.
+- Tutorial and How to play cards now wrap their text by its real measured width in the device's font, not by counting characters, so no line touches the card edge on any phone. The text area keeps a small safety margin, and tests check every card in every mode.
 
 ### Sound
 

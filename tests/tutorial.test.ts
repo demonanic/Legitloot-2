@@ -143,3 +143,23 @@ test("cards: guided info steps offer Got it and Skip; the do step offers only Sk
   // The do step sits at the top, leaving the field near the stronghold free to tap.
   assert.ok(cardLayout(cfg, "build", { kind: "guided" }).card.y + cardLayout(cfg, "build", { kind: "guided" }).card.h < cfg.stronghold.y - 200);
 });
+
+test("cards: with a real measure, wrapping goes by width, keeps every word, and never overflows", () => {
+  // A deliberately wide fake font: capitals and punctuation-heavy text are wider.
+  const measure = (t: string) => [...t].reduce((n, ch) => n + (/[A-Z(),]/.test(ch) ? 17 : ch === " " ? 7 : 13), 0);
+  for (const t of TIPS) {
+    for (const m of [{ kind: "guided" }, { kind: "tip" }, { kind: "help", index: 0 }] as const) {
+      const c = cardLayout(cfg, t.id, m, measure);
+      const textWidth = c.card.w - 2 * 28 - 12;
+      for (const line of c.lines) assert.ok(measure(line) <= textWidth, `${t.id}: "${line}" is ${measure(line)} > ${textWidth}`);
+      assert.equal(c.lines.join(" ").split(/\s+/).join(" "), t.body.split(/\s+/).join(" "), `${t.id}: words kept in order`);
+      // Buttons stay inside the card however many lines the text needs.
+      for (const b of c.buttons) assert.ok(b.rect.y + b.rect.h <= c.card.y + c.card.h, t.id);
+    }
+  }
+});
+
+test("cards: a narrower font packs more onto a line than a wider one", () => {
+  const body = tipById("manage").body;
+  assert.ok(wrap(body, CARD_CHARS, (t) => t.length * 10).length < wrap(body, CARD_CHARS, (t) => t.length * 14).length);
+});

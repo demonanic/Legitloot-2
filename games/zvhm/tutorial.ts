@@ -261,14 +261,24 @@ export interface CardLayout {
 export const CARD_CHARS = 52;
 export const CARD_LINE = 34;
 
-/** Greedy word wrap to at most `max` characters a line. */
-export function wrap(text: string, max = CARD_CHARS): string[] {
+/** How wide a line of body text is, in world units (the game measures with its real font). */
+export type Measure = (text: string) => number;
+
+/** Body text area inside a card: card width minus padding, with a little slack for font rounding. */
+export const CARD_TEXT_WIDTH = 720 - 60 - 2 * 28 - 12;
+
+/**
+ * Greedy word wrap. With `measure`, a line holds as many words as fit in
+ * `maxWidth` of real text; without it (tests, no canvas) at most `max` characters.
+ */
+export function wrap(text: string, max = CARD_CHARS, measure?: Measure, maxWidth = CARD_TEXT_WIDTH): string[] {
+  const fits = (candidate: string) => (measure ? measure(candidate) <= maxWidth : candidate.length <= max);
   const lines: string[] = [];
   for (const para of text.split("\n")) {
     let line = "";
     for (const word of para.split(/\s+/).filter(Boolean)) {
       if (!line) line = word;
-      else if (line.length + 1 + word.length <= max) line += " " + word;
+      else if (fits(line + " " + word)) line += " " + word;
       else {
         lines.push(line);
         line = word;
@@ -283,14 +293,19 @@ export function wrap(text: string, max = CARD_CHARS): string[] {
  * Lay out a tip card. `mode` is "guided" (Got it / Skip tutorial), "tip"
  * (Got it only), or "help" with the page number (Back / Next / Close).
  */
-export function cardLayout(cfg: GameConfig, id: TipId, mode: { kind: "guided" } | { kind: "tip" } | { kind: "help"; index: number }): CardLayout {
+export function cardLayout(
+  cfg: GameConfig,
+  id: TipId,
+  mode: { kind: "guided" } | { kind: "tip" } | { kind: "help"; index: number },
+  measure?: Measure,
+): CardLayout {
   const tip = tipById(id);
   const W = cfg.world.width;
   const H = cfg.world.height;
-  const lines = wrap(tip.body);
   const pad = 28;
   const x = 30;
   const w = W - 60;
+  const lines = wrap(tip.body, CARD_CHARS, measure, w - 2 * pad - 12);
   const h = 96 + lines.length * CARD_LINE + 24 + 72 + pad;
   // Help cards sit in the middle; tips that point at the field sit at the top.
   const y = mode.kind === "help" || tip.where === "middle" ? Math.round(H / 2 - h / 2 - 60) : 136;

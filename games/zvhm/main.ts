@@ -42,6 +42,7 @@ import { createAudio } from "../../engine/audio/audio.js";
 import { MUSIC, SOUNDS, musicIntensity, soundEvents, soundSnapshot, weaponSounds, type SoundSnapshot } from "./sounds.js";
 import { currentCard, BUILD_MESSAGES, MANAGE_MESSAGES, draw, uiRegions, type ViewState } from "./view.js";
 import { migrateSaves, saveKey } from "./storage.js";
+import { createPortalReporter, parentPoster } from "./portal.js";
 
 // Saves from before the rename (Zombie Invasion Defense → Zombies vs Heavy Metal) carry over.
 try {
@@ -75,6 +76,9 @@ function loadSurvivors(): string[] {
 }
 const unlockedSurvivors: string[] = loadSurvivors();
 let state: GameState = newRun();
+// Inside legitloot.site's game page, report run progress to it for award tracking.
+const portalPost = stress || fixedSeed !== null ? null : parentPoster(window);
+const portal = portalPost ? createPortalReporter(portalPost, "0.1.0") : null;
 // The build menu remembers its last page, so placing several traps in a row is quick.
 function savedSound(): boolean {
   try {
@@ -388,6 +392,7 @@ const loop = createLoop({
     // The game waits while a tutorial card or the reference is open.
     if (view.tutorial || view.help !== null) return;
     step(state, cfg, dt);
+    portal?.update(state);
     playSounds();
     // Bank Salvage the moment a haul is unloaded, so it is safe whatever happens next.
     if (!stress && state.salvageBanked > salvageSaved) {

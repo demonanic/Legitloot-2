@@ -47,6 +47,11 @@ The smallest playable proof, fully offline:
 - Browser saves are now `zvhm.*` (salvage, survivors, tutorial, sound, ranges). On first load, any old `zid.*` save is copied across once, so nobody loses Salvage, unlocked survivors, tutorial progress or settings. The old keys are left in place.
 - Tutorial and How to play cards now wrap their text by its real measured width in the device's font, not by counting characters, so no line touches the card edge on any phone. The text area keeps a small safety margin, and tests check every card in every mode.
 
+### LegitLoot awards
+
+- On legitloot.site's game page, the game reports each run to the page for award tracking: a start, a checkpoint after every cleared wave, and the final totals on defeat (waves cleared, kills, bosses killed). Played on its own, or with `?seed=` or `?stress`, nothing is sent.
+- Messages go only to `https://legitloot.site`, and are held until that page says it is listening. The site's server checks every report against its own clock before any award counts. Code: `games/zvhm/portal.ts`.
+
 ### Sound
 
 - Synthesized sound effects: no audio files, nothing to download. Every weapon has its own (gun crack, shotgun boom, flamer roar, Tesla zap, railgun whine, mortar thump, rocket whoosh). There are also explosions, boomer acid, boss stomps and roars, spitter globs, stronghold hits, wrecked buildings, building, pickups, perk chimes, and cues for the warning, wave start, wave cleared and defeat.
